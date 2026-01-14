@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
-*.pyo
-*.log
+
+# local assets (large)
+juego_ranges.xlsx
+cards/
+
+# virtual env
 .venv/
 venv/
+env/
