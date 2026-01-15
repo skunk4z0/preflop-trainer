@@ -1,9 +1,9 @@
-import random
 import itertools
+import random
 import sys
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Tuple, Optional, Any
+from typing import Optional, Tuple, Any
 
 
 class ProblemType(Enum):
@@ -40,7 +40,6 @@ class GameController:
     def _log(self, msg: str) -> None:
         try:
             print(msg, flush=True)
-            # 念のため。pythonw/IDE で効かない場合もあるが害はない
             try:
                 sys.stdout.flush()
             except Exception:
@@ -56,9 +55,10 @@ class GameController:
             pass
 
     # =========================
-    # 開始
+    # 開始（メニュー等から呼ぶ）
     # =========================
     def start_yokosawa_open(self):
+        self._log("[CTRL] start_yokosawa_open clicked")
         self.problem_type = ProblemType.YOKOSAWA_OPEN
         self.new_question()
 
@@ -91,15 +91,20 @@ class GameController:
             self.ui.deal_cards(self.context.hole_cards)
 
             # UI 仕様に合わせて統一：set_hand_pos
-            self.ui.set_hand_pos(
-                hand=self.context.excel_hand_key,
-                pos=self.context.position,
-            )
+            if hasattr(self.ui, "set_hand_pos"):
+                self.ui.set_hand_pos(
+                    hand=self.context.excel_hand_key,
+                    pos=self.context.position,
+                )
+
+            # ルース時だけ文言を変える（判定タグは表示しない）
+            extra = "（相手はルース）" if self.context.loose_player_exists else ""
 
             self.ui.show_text(
                 f"【JUEGO】オープンレイズ判断｜"
                 f"Pos: {self.context.position}｜"
                 f"{self.context.open_size_bb}BB"
+                f"{extra}"
             )
             return
 
@@ -110,30 +115,25 @@ class GameController:
     # 回答
     # =========================
     def submit(self, hand: Optional[str] = None, pos: Optional[str] = None, user_action: Optional[str] = None):
-        # ここが出ないなら「submitが呼ばれていない」か「標準出力が見えない」か「別ファイル実行」
         self._log(f">>> SUBMIT CALLED hand={hand} pos={pos} user_action={user_action}")
-
-        # 引数が UI から渡ってこない場合のフォールバック（切り分け用）
-        if (hand is None or pos is None) and hasattr(self.ui, "get_hand_pos"):
-            try:
-                hp = self.ui.get_hand_pos()
-                # 返り値が (hand, pos) or dict 等いろいろあり得るので吸収
-                if isinstance(hp, tuple) and len(hp) >= 2:
-                    hand = hand or hp[0]
-                    pos = pos or hp[1]
-                elif isinstance(hp, dict):
-                    hand = hand or hp.get("hand")
-                    pos = pos or hp.get("pos")
-            except Exception as e:
-                self._log(f"[CTRL] get_hand_pos failed: {e}")
-
-        result: Any = None
-        is_correct = False
 
         try:
             if self.problem_type is None:
                 self.ui.show_text("モードを選択してください")
                 return
+
+            # UI から hand/pos を取れる設計なら補完（切り分け用）
+            if (hand is None or pos is None) and hasattr(self.ui, "get_hand_pos"):
+                try:
+                    hp = self.ui.get_hand_pos()
+                    if isinstance(hp, tuple) and len(hp) >= 2:
+                        hand = hand or hp[0]
+                        pos = pos or hp[1]
+                    elif isinstance(hp, dict):
+                        hand = hand or hp.get("hand")
+                        pos = pos or hp.get("pos")
+                except Exception as e:
+                    self._log(f"[CTRL] get_hand_pos failed: {e}")
 
             # -------------------------
             # ヨコサワ式
@@ -146,59 +146,49 @@ class GameController:
 
                 result = self.yokosawa_judge.judge(pos=pos, hand=hand)
                 is_correct = (user_action == getattr(result, "action", None))
+                reason = getattr(result, "reason", "")
+
+                self.ui.show_text(f"{'正解' if is_correct else '不正解'}：{reason}")
+                return
 
             # -------------------------
             # JUEGO OR
             # -------------------------
-            elif self.problem_type == ProblemType.JUEGO_OR:
+            if self.problem_type == ProblemType.JUEGO_OR:
                 if self.context is None:
                     raise RuntimeError("Context is missing")
-                    
-                import time
-                import traceback
+                if user_action is None:
+                    raise RuntimeError("user_action is missing")
+
                 ctx = self.context
 
                 self._log("[CTRL] about to call juego_judge.judge_or()")
-                t0 = time.time()
-                try:
-                    result = self.juego_judge.judge_or(
-                        position=ctx.position,
-                        hand=ctx.excel_hand_key,
-                        user_action=user_action,
-                        loose=ctx.loose_player_exists,
-                        )
-                
-                except Exception as e:
-                    self._log("[CTRL] judge_or raised exception!")
-                    self._log(str(e))
-                    self._log(traceback.format_exc())
-                    raise
-                finally:
-                    dt = time.time() - t0
-                    self._log(f"[CTRL] judge_or finished (dt={dt:.3f}s)")
+                result = self.juego_judge.judge_or(
+                    position=ctx.position,
+                    hand=ctx.excel_hand_key,
+                    user_action=user_action,
+                    loose=ctx.loose_player_exists,
+                )
 
-                self._log("[CTRL] judge_or returned result object")
-
+                # debug 表示（既存仕様）
                 debug_obj = getattr(result, "debug", None)
                 self._log("=== JUEGO DEBUG ===")
                 self._log(str(debug_obj) if debug_obj is not None else "NO_DEBUG")
                 self._log("===================")
 
                 is_correct = bool(getattr(result, "correct", False))
+                reason = getattr(result, "reason", "")
+                self.ui.show_text(f"{'正解' if is_correct else '不正解'}：{reason}")
+                return
 
-
-            # -------------------------
-            # UI反映（統一：show_text）
-            # -------------------------
-            reason = getattr(result, "reason", "")
-            if is_correct:
-                self.ui.show_text(f"正解：{reason}")
-            else:
-                self.ui.show_text(f"不正解：{reason}")
+            # 万一ここに来たら
+            self.ui.show_text("未対応のモードです")
+            return
 
         except Exception as e:
             self.ui.show_text(f"内部エラー：{e}")
             self._log(f"[CTRL] Exception in submit: {e}")
+            raise
 
         finally:
             # 次へは UI の Next ボタンに任せる
@@ -233,12 +223,17 @@ class GameController:
         r2, s2 = c2[0], c2[1]
 
         ranks = "AKQJT98765432"
+
+        # 強いランクを先に（AKQ... が先）
         if ranks.index(r1) > ranks.index(r2):
             r1, r2 = r2, r1
             s1, s2 = s2, s1
 
+        # ペア
         if r1 == r2:
             return r1 + r2
+
+        # suited / offsuit
         if s1 == s2:
             return r1 + r2 + "s"
         return r1 + r2 + "o"

@@ -63,8 +63,26 @@ class ExcelRangeRepository:
 
     def find_anchor_by_pos(self, kind: str, pos: str) -> AnchorMatch:
         cache_key = (kind, pos)
+
         if cache_key in self._anchor_cache:
-            return self._anchor_cache[cache_key]
+            m = self._anchor_cache[cache_key]
+
+            # debug 属性が無くても落ちない
+            if getattr(self, "debug", False):
+                self._log(
+                    f"[REPO][ANCHOR] cached "
+                    f"pos_cell={m.pos_cell} -> AA={m.aa_cell} "
+                    f"(kind={kind} pos={pos})"
+                )
+
+            return m
+
+    # 以下、既存の探索ロジック…
+
+
+    # --- ② キャッシュミス（ここから探索） ---
+    # ↓↓↓ 既存のアンカー探索ロジック（そのまま）
+
 
         if kind not in self.aa_search_ranges:
             raise KeyError(
@@ -231,23 +249,33 @@ class ExcelRangeRepository:
         """
         top_r, top_c = self.get_grid_top_left(kind, pos)
 
-        # 13x13 内で hand_key を検索（文字列の余計な空白も吸収）
+                # 13x13 内で hand_key を検索（空白除去 + "66+" などにも対応）
         found_cell = None
         found_rc = None
+
         for r0 in range(13):
             for c0 in range(13):
                 cell = self.ws.cell(row=top_r + r0, column=top_c + c0)
                 v = cell.value
-                if isinstance(v, str):
-                    v_norm = v.strip()
-                else:
-                    v_norm = v
+
+                # 文字列なら空白除去して比較、None なら空文字
+                v_norm = (v.strip() if isinstance(v, str) else ("" if v is None else str(v)))
+
+                # 完全一致（いままで通り）
                 if v_norm == hand_key:
                     found_cell = cell
                     found_rc = (r0, c0)
                     break
+
+                # 追加： "66+" や "KJo+" のような表記も拾う
+                if isinstance(v, str) and v_norm.startswith(hand_key):
+                    found_cell = cell
+                    found_rc = (r0, c0)
+                    break
+
             if found_cell is not None:
                 break
+  
 
         if found_cell is None:
             if self.enable_debug:

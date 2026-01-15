@@ -3,7 +3,9 @@ __pycache__/
 
 # local assets (large)
 juego_ranges.xlsx
+~$juego_ranges.xlsx
 cards/
+yokosawarange/
 
 # virtual env
 .venv/
