@@ -41,7 +41,7 @@ class PokerTrainerUI:
                 wb=wb,
                 sheet_name=sheet_name,
                 aa_search_ranges=config.AA_SEARCH_RANGES,
-                grid_topleft_offsets=config.GRID_TOPLEFT_OFFSETS,
+                grid_topleft_offset=config.GRID_TOPLEFT_OFFSET,
                 ref_color_offsets=config.REF_COLOR_OFFSETS,
             )
         except Exception as e:
@@ -79,14 +79,12 @@ class PokerTrainerUI:
         # --- 追加：回答ボタン ---
         ans = tk.Frame(root)
         ans.pack(padx=10, pady=5)
-
-        self.btn_fold = tk.Button(ans, text="FOLD", width=10, command=lambda: self.on_answer("FOLD"))
-        self.btn_tight = tk.Button(ans, text="OPEN(TIGHT)", width=12, command=lambda: self.on_answer("TIGHT"))
-        self.btn_loose = tk.Button(ans, text="OPEN(LOOSE)", width=12, command=lambda: self.on_answer("LOOSE"))
-
+    
+        self.btn_fold  = tk.Button(ans, text="FOLD",  width=10,command=lambda: self.on_answer("FOLD"))
+        self.btn_raise = tk.Button(ans, text="RAISE", width=12,command=lambda: self.on_answer("RAISE"))
+        
         self.btn_fold.pack(side=tk.LEFT, padx=5)
-        self.btn_tight.pack(side=tk.LEFT, padx=5)
-        self.btn_loose.pack(side=tk.LEFT, padx=5)
+        self.btn_raise.pack(side=tk.LEFT, padx=5)
         
         cards_frame = tk.Frame(root)
         cards_frame.pack(padx=10, pady=10)
@@ -118,7 +116,6 @@ class PokerTrainerUI:
     def start_juego(self) -> None:
         # 開始後に何度も押されるとややこしいので無効化
         self.btn_juego.configure(state=tk.DISABLED)
-        self.controller.start_juego_beginner()
         self.controller.start_juego_beginner()
 
     def on_answer(self, action: str) -> None:
