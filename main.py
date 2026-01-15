@@ -42,8 +42,10 @@ class PokerTrainerUI:
                 sheet_name=sheet_name,
                 aa_search_ranges=config.AA_SEARCH_RANGES,
                 grid_topleft_offset=config.GRID_TOPLEFT_OFFSET,
-                ref_color_offsets=config.REF_COLOR_OFFSETS,
+                ref_color_cells=config.REF_COLOR_CELLS,   # ★これ
+                enable_debug=True,
             )
+
         except Exception as e:
             messagebox.showerror("Repository Error", f"Repository初期化に失敗:\n{e}")
             raise
@@ -81,7 +83,7 @@ class PokerTrainerUI:
         ans.pack(padx=10, pady=5)
     
         self.btn_fold  = tk.Button(ans, text="FOLD",  width=10,command=lambda: self.on_answer("FOLD"))
-        self.btn_raise = tk.Button(ans, text="RAISE", width=12,command=lambda: self.on_answer("RAISE"))
+        self.btn_raise = tk.Button(ans, text="RAISE", width=12, command=lambda: self.on_answer("RAISE"))
         
         self.btn_fold.pack(side=tk.LEFT, padx=5)
         self.btn_raise.pack(side=tk.LEFT, padx=5)

@@ -1,8 +1,9 @@
 import random
 import itertools
+import sys
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Any
 
 
 class ProblemType(Enum):
@@ -34,6 +35,27 @@ class GameController:
         self.deck = [r + s for r, s in itertools.product(ranks, suits)]
 
     # =========================
+    # 内部ログ（print が見えない環境でも UI に出す）
+    # =========================
+    def _log(self, msg: str) -> None:
+        try:
+            print(msg, flush=True)
+            # 念のため。pythonw/IDE で効かない場合もあるが害はない
+            try:
+                sys.stdout.flush()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # UI にも出す（最低限、見える）
+        try:
+            if hasattr(self.ui, "show_text"):
+                self.ui.show_text(msg)
+        except Exception:
+            pass
+
+    # =========================
     # 開始
     # =========================
     def start_yokosawa_open(self):
@@ -41,7 +63,7 @@ class GameController:
         self.new_question()
 
     def start_juego_beginner(self):
-        print("[CTRL] start_juego_beginner clicked")
+        self._log("[CTRL] start_juego_beginner clicked")
         self.problem_type = ProblemType.JUEGO_OR
         self.new_question()
 
@@ -49,11 +71,14 @@ class GameController:
     # 新しい問題
     # =========================
     def new_question(self):
-        print("[CTRL] new_question called. problem_type=", self.problem_type)
+        self._log(f"[CTRL] new_question called. problem_type={self.problem_type}")
 
         # Next は「回答後に表示」したいので、問題生成時点では隠す
         if hasattr(self.ui, "hide_next_button"):
-            self.ui.hide_next_button()
+            try:
+                self.ui.hide_next_button()
+            except Exception as e:
+                self._log(f"[CTRL] hide_next_button failed: {e}")
 
         if self.problem_type == ProblemType.YOKOSAWA_OPEN:
             hole = tuple(random.sample(self.deck, 2))
@@ -65,7 +90,7 @@ class GameController:
             self.context = self._generate_juego_open_raise_problem()
             self.ui.deal_cards(self.context.hole_cards)
 
-            # UI 仕様に合わせて統一：set_entries -> set_hand_pos
+            # UI 仕様に合わせて統一：set_hand_pos
             self.ui.set_hand_pos(
                 hand=self.context.excel_hand_key,
                 pos=self.context.position,
@@ -84,12 +109,25 @@ class GameController:
     # =========================
     # 回答
     # =========================
-    def submit(self, hand, pos, user_action):
-        """
-        UI側に「回答ボタン」がある想定。
-        UIから (hand, pos, user_action) を渡して呼ぶ。
-        """
-        result = None
+    def submit(self, hand: Optional[str] = None, pos: Optional[str] = None, user_action: Optional[str] = None):
+        # ここが出ないなら「submitが呼ばれていない」か「標準出力が見えない」か「別ファイル実行」
+        self._log(f">>> SUBMIT CALLED hand={hand} pos={pos} user_action={user_action}")
+
+        # 引数が UI から渡ってこない場合のフォールバック（切り分け用）
+        if (hand is None or pos is None) and hasattr(self.ui, "get_hand_pos"):
+            try:
+                hp = self.ui.get_hand_pos()
+                # 返り値が (hand, pos) or dict 等いろいろあり得るので吸収
+                if isinstance(hp, tuple) and len(hp) >= 2:
+                    hand = hand or hp[0]
+                    pos = pos or hp[1]
+                elif isinstance(hp, dict):
+                    hand = hand or hp.get("hand")
+                    pos = pos or hp.get("pos")
+            except Exception as e:
+                self._log(f"[CTRL] get_hand_pos failed: {e}")
+
+        result: Any = None
         is_correct = False
 
         try:
@@ -103,9 +141,11 @@ class GameController:
             if self.problem_type == ProblemType.YOKOSAWA_OPEN:
                 if self.yokosawa_judge is None:
                     raise RuntimeError("yokosawa_judge is not set")
+                if hand is None or pos is None or user_action is None:
+                    raise RuntimeError(f"Missing args for YOKOSAWA_OPEN: hand={hand}, pos={pos}, action={user_action}")
 
                 result = self.yokosawa_judge.judge(pos=pos, hand=hand)
-                is_correct = (user_action == result.action)
+                is_correct = (user_action == getattr(result, "action", None))
 
             # -------------------------
             # JUEGO OR
@@ -113,25 +153,39 @@ class GameController:
             elif self.problem_type == ProblemType.JUEGO_OR:
                 if self.context is None:
                     raise RuntimeError("Context is missing")
-
+                    
+                import time
+                import traceback
                 ctx = self.context
-                result = self.juego_judge.judge_or(
-                    position=ctx.position,
-                    hand=ctx.excel_hand_key,
-                    user_action=user_action,
-                    loose=ctx.loose_player_exists,
-                )
 
-                # ===== DEBUG PRINT =====
-                print("=== JUEGO DEBUG ===")
-                print(getattr(result, "debug", "NO_DEBUG"))
-                print("===================")
+                self._log("[CTRL] about to call juego_judge.judge_or()")
+                t0 = time.time()
+                try:
+                    result = self.juego_judge.judge_or(
+                        position=ctx.position,
+                        hand=ctx.excel_hand_key,
+                        user_action=user_action,
+                        loose=ctx.loose_player_exists,
+                        )
+                
+                except Exception as e:
+                    self._log("[CTRL] judge_or raised exception!")
+                    self._log(str(e))
+                    self._log(traceback.format_exc())
+                    raise
+                finally:
+                    dt = time.time() - t0
+                    self._log(f"[CTRL] judge_or finished (dt={dt:.3f}s)")
+
+                self._log("[CTRL] judge_or returned result object")
+
+                debug_obj = getattr(result, "debug", None)
+                self._log("=== JUEGO DEBUG ===")
+                self._log(str(debug_obj) if debug_obj is not None else "NO_DEBUG")
+                self._log("===================")
 
                 is_correct = bool(getattr(result, "correct", False))
 
-            else:
-                self.ui.show_text("未対応のモードです")
-                return
 
             # -------------------------
             # UI反映（統一：show_text）
@@ -144,11 +198,15 @@ class GameController:
 
         except Exception as e:
             self.ui.show_text(f"内部エラー：{e}")
+            self._log(f"[CTRL] Exception in submit: {e}")
 
         finally:
-            # 次へは UI の Next ボタンに任せる（UI側の on_next が new_question() を呼ぶ想定）
+            # 次へは UI の Next ボタンに任せる
             if hasattr(self.ui, "show_next_button"):
-                self.ui.show_next_button()
+                try:
+                    self.ui.show_next_button()
+                except Exception as e:
+                    self._log(f"[CTRL] show_next_button failed: {e}")
 
     # =========================
     # 問題生成（JUEGO OR）
