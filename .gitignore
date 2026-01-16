@@ -2,8 +2,7 @@ __pycache__/
 *.pyc
 
 # local assets (large)
-juego_ranges.xlsx
-~$juego_ranges.xlsx
+.xlsx
 cards/
 yokosawarange/
 
