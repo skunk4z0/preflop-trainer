@@ -2,7 +2,10 @@ __pycache__/
 *.pyc
 
 # local assets (large)
-.xlsx
+*.xlsx
+*.xls
+~$*.xlsx
+
 cards/
 yokosawarange/
 
