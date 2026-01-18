@@ -8,11 +8,8 @@ from tkinter import messagebox
 from openpyxl import load_workbook
 
 import config
-from excel_range_repository import ExcelRangeRepository
 from controller import GameController
-
-# あなたの実装ファイル名に合わせて import 名を調整してください
-# 例: juego_judge.py に class JUEGOJudge がある前提
+from excel_range_repository import ExcelRangeRepository
 from juego_judge import JUEGOJudge
 
 
@@ -25,7 +22,7 @@ class PokerTrainerUI:
         self.root.title("Poker Trainer")
 
         # -------------------------
-        # Excel / Repository 初期化（新仕様）
+        # Excel / Repository 初期化（新仕様：座標→セル色）
         # -------------------------
         try:
             wb = load_workbook(config.EXCEL_PATH, data_only=True)
@@ -33,19 +30,15 @@ class PokerTrainerUI:
             messagebox.showerror("Excel Error", f"Excelを開けません:\n{config.EXCEL_PATH}\n\n{e}")
             raise
 
-        # ※あなたのExcelのシート名に合わせて変更
-        sheet_name = "JUEGO"
-
         try:
             repo = ExcelRangeRepository(
                 wb=wb,
-                sheet_name=sheet_name,
+                sheet_name=config.SHEET_NAME,                 # ★ config を正に統一
                 aa_search_ranges=config.AA_SEARCH_RANGES,
                 grid_topleft_offset=config.GRID_TOPLEFT_OFFSET,
-                ref_color_cells=config.REF_COLOR_CELLS,   # ★これ
-                enable_debug=True,
+                ref_color_cells=config.REF_COLOR_CELLS,
+                enable_debug=True,                            # まずは True 推奨（落ち着いたら False）
             )
-
         except Exception as e:
             messagebox.showerror("Repository Error", f"Repository初期化に失敗:\n{e}")
             raise
@@ -53,15 +46,11 @@ class PokerTrainerUI:
         # -------------------------
         # Judges 初期化
         # -------------------------
-        # JUEGOJudge が repo を受け取る想定（あなたの実装に合わせてOK）
         juego_judge = JUEGOJudge(repo)
-
-        # Yokosawa はまだ未実装でも起動させるためのダミー
-        # 後で本物に差し替えればOK
-        yokosawa_judge = None
+        yokosawa_judge = None  # 未実装でも起動優先
 
         # -------------------------
-        # Controller 初期化（あなたの __init__ 仕様に合わせる）
+        # Controller 初期化
         # -------------------------
         self.controller = GameController(self, juego_judge, yokosawa_judge)
 
@@ -76,18 +65,20 @@ class PokerTrainerUI:
 
         self.btn_next = tk.Button(top, text="Next", command=self.on_next)
         self.btn_next.pack(side=tk.LEFT, padx=5)
-        self.btn_next.pack_forget()  # ←追加：初期状態は非表示
+        self.btn_next.pack_forget()  # 初期は非表示
 
-        # --- 追加：回答ボタン ---
+        # --- 回答ボタン（方針A：FOLD / RAISE / LIMP_CALL） ---
         ans = tk.Frame(root)
         ans.pack(padx=10, pady=5)
-    
-        self.btn_fold  = tk.Button(ans, text="FOLD",  width=10,command=lambda: self.on_answer("FOLD"))
+
+        self.btn_fold = tk.Button(ans, text="FOLD", width=10, command=lambda: self.on_answer("FOLD"))
         self.btn_raise = tk.Button(ans, text="RAISE", width=12, command=lambda: self.on_answer("RAISE"))
-        
+        self.btn_limp_call = tk.Button(ans, text="LIMP_CALL", width=12, command=lambda: self.on_answer("LIMP_CALL"))
+
         self.btn_fold.pack(side=tk.LEFT, padx=5)
         self.btn_raise.pack(side=tk.LEFT, padx=5)
-        
+        self.btn_limp_call.pack(side=tk.LEFT, padx=5)
+
         cards_frame = tk.Frame(root)
         cards_frame.pack(padx=10, pady=10)
 
@@ -118,13 +109,12 @@ class PokerTrainerUI:
     def start_juego(self) -> None:
         # 開始後に何度も押されるとややこしいので無効化
         self.btn_juego.configure(state=tk.DISABLED)
-        self.controller.start_juego_beginner()
+        # controller の新基準メソッド名に統一
+        self.controller.start_juego_or()
 
     def on_answer(self, action: str) -> None:
-        hand = self.var_hand.get().strip()
-        pos = self.var_pos.get().strip()
-        self.controller.submit(hand=hand, pos=pos, user_action=action)
-    
+        # controller.submit は user_action のみ受ける（hand/pos は context から）
+        self.controller.submit(user_action=action)
 
     def on_next(self) -> None:
         self.controller.new_question()
@@ -133,17 +123,13 @@ class PokerTrainerUI:
     # Controller -> UI
     # -------------------------
     def hide_next_button(self) -> None:
-        """Controller から呼ばれる想定: Next ボタンを隠す"""
-        # Nextボタンは pack で配置しているので pack_forget
         self.btn_next.pack_forget()
 
     def show_next_button(self) -> None:
-        """Controller から呼ばれる想定: Next ボタンを表示"""
-        # 既に表示されている場合もあるので、重複packを避けたいならwinfo_managerで判定してもよい
         if self.btn_next.winfo_manager() == "":
             self.btn_next.pack(side=tk.LEFT, padx=5)
 
-    def deal_cards(self, hole_cards: list[str]) -> None:
+    def deal_cards(self, hole_cards: tuple[str, str]) -> None:
         c1, c2 = hole_cards
         self._set_card_image(self.card_labels[0], c1)
         self._set_card_image(self.card_labels[1], c2)
