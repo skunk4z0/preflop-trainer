@@ -52,6 +52,7 @@ def _normalize_hand_to_key(hand: str) -> str:
 
     raise ValueError(f"Unrecognized hand format: {hand!r}")
 
+
 def _expected_cell_label_from_hand_key(hand_key: str) -> str:
     """
     新Excelのセル内表示は末尾の s/o が無い想定。
@@ -163,6 +164,15 @@ class ExcelRangeRepository:
 
         # kind -> tag -> rgb
         self._ref_color_cache: Dict[str, Dict[str, str]] = {}
+
+    # =========================
+    # small safe getter (for debug only)
+    # =========================
+    def _safe_getattr(self, obj, name: str):
+        try:
+            return getattr(obj, name)
+        except Exception as e:
+            return f"<err:{e}>"
 
     # =========================
     # Anchor (pos -> AA)
@@ -284,11 +294,17 @@ class ExcelRangeRepository:
 
             if self.enable_debug:
                 fg = getattr(cell.fill, "fgColor", None)
+                fg_type = self._safe_getattr(fg, "type") if fg is not None else None
+
+                # type に応じて「有効なものだけ」読む（＋安全化）
+                fg_rgb = self._safe_getattr(fg, "rgb") if fg is not None and (fg_type in (None, "rgb")) else None
+                fg_theme = self._safe_getattr(fg, "theme") if fg is not None and fg_type == "theme" else None
+                fg_indexed = self._safe_getattr(fg, "indexed") if fg is not None and fg_type == "indexed" else None
+
                 print(
                     f"[REPO][REF-FIXED] kind={kind} tag={tag} cell={cell.coordinate} "
                     f"patternType={getattr(cell.fill, 'patternType', None)} "
-                    f"fg.type={getattr(fg, 'type', None)} fg.rgb={getattr(fg, 'rgb', None)} "
-                    f"fg.theme={getattr(fg, 'theme', None)} fg.indexed={getattr(fg, 'indexed', None)} "
+                    f"fg.type={fg_type} fg.rgb={fg_rgb} fg.theme={fg_theme} fg.indexed={fg_indexed} "
                     f"read_rgb={rgb}",
                     flush=True,
                 )
@@ -349,7 +365,7 @@ class ExcelRangeRepository:
         hand_key -> (r0,c0) -> グリッド直接参照 -> fill色でタグ判定。
         追加仕様：
         - 「セル値（ハンド名）と色」が両方揃ったときだけ有効
-        文字列のみ / 色のみ は “色なし” と同じ扱い（= FOLD）
+          文字列のみ / 色のみ は “色なし” と同じ扱い（= FOLD）
         """
         debug: Dict[str, Any] = {"kind": kind, "position": position, "hand_in": hand}
         hand_key = _normalize_hand_to_key(hand)
@@ -357,7 +373,7 @@ class ExcelRangeRepository:
         expected_label = _expected_cell_label_from_hand_key(hand_key)
         debug.update({"hand_key": hand_key, "r0": r0, "c0": c0, "expected_label": expected_label})
 
-    # 1) グリッド左上
+        # 1) グリッド左上
         top_r, top_c = self.get_grid_top_left(kind, position)
         debug["grid_topleft"] = (top_r, top_c)
 
@@ -369,7 +385,7 @@ class ExcelRangeRepository:
         debug["target_cell_a1"] = cell.coordinate
         debug["cell_value"] = cell.value
 
-    # ★追加：セル値チェック（色だけの凡例セルなどを除外）
+        # ★セル値チェック（色だけの凡例セルなどを除外）
         cell_text = "" if cell.value is None else str(cell.value).strip().upper()
         debug["cell_text_norm"] = cell_text
 
@@ -382,11 +398,11 @@ class ExcelRangeRepository:
             debug["rejected_reason"] = "cell_label_mismatch_or_blank"
             return "FOLD", debug
 
-    # 2) 対象セルの色（ここまで来たら “文字＋色” の色を見る）
+        # 2) 対象セルの色（ここまで来たら “文字＋色” の色を見る）
         rgb = self._read_fill_rgb(cell)
         debug["cell_rgb"] = rgb
 
-    # 3) 見本色と照合
+        # 3) 見本色と照合
         ref = self.get_ref_colors(kind)  # tag -> rgb
         debug["ref_colors"] = ref
 
@@ -403,4 +419,3 @@ class ExcelRangeRepository:
         debug["tag"] = "FOLD"
         debug["unmatched_rgb"] = rgb
         return "FOLD", debug
-

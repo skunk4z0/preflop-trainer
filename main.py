@@ -22,7 +22,7 @@ class PokerTrainerUI:
         self.root.title("Poker Trainer")
 
         # -------------------------
-        # Excel / Repository 初期化（新仕様：座標→セル色）
+        # Excel / Repository 初期化
         # -------------------------
         try:
             wb = load_workbook(config.EXCEL_PATH, data_only=True)
@@ -33,26 +33,20 @@ class PokerTrainerUI:
         try:
             repo = ExcelRangeRepository(
                 wb=wb,
-                sheet_name=config.SHEET_NAME,                 # ★ config を正に統一
+                sheet_name=config.SHEET_NAME,
                 aa_search_ranges=config.AA_SEARCH_RANGES,
                 grid_topleft_offset=config.GRID_TOPLEFT_OFFSET,
                 ref_color_cells=config.REF_COLOR_CELLS,
-                enable_debug=True,                            # まずは True 推奨（落ち着いたら False）
+                enable_debug=True,
             )
         except Exception as e:
             messagebox.showerror("Repository Error", f"Repository初期化に失敗:\n{e}")
             raise
 
-        # -------------------------
-        # Judges 初期化
-        # -------------------------
         juego_judge = JUEGOJudge(repo)
-        yokosawa_judge = None  # 未実装でも起動優先
+        yokosawa_judge = None
 
-        # -------------------------
-        # Controller 初期化
-        # -------------------------
-        self.controller = GameController(self, juego_judge, yokosawa_judge)
+        self.controller = GameController(self, juego_judge, yokosawa_judge, enable_debug=True)
 
         # -------------------------
         # UI
@@ -60,31 +54,47 @@ class PokerTrainerUI:
         top = tk.Frame(root)
         top.pack(padx=10, pady=10)
 
-        self.btn_juego = tk.Button(top, text="JUEGO (Beginner)", command=self.start_juego)
-        self.btn_juego.pack(side=tk.LEFT, padx=5)
+        self.btn_juego_b = tk.Button(top, text="JUEGO 初級(OR)", command=self.start_juego_beginner)
+        self.btn_juego_i = tk.Button(top, text="JUEGO 中級(OR_SB/ROL)", command=self.start_juego_intermediate)
+        self.btn_juego_a = tk.Button(top, text="JUEGO 上級(未)", command=self.start_juego_advanced)
+        self.btn_juego_b.pack(side=tk.LEFT, padx=5)
+        self.btn_juego_i.pack(side=tk.LEFT, padx=5)
+        self.btn_juego_a.pack(side=tk.LEFT, padx=5)
 
         self.btn_next = tk.Button(top, text="Next", command=self.on_next)
         self.btn_next.pack(side=tk.LEFT, padx=5)
-        self.btn_next.pack_forget()  # 初期は非表示
+        self.btn_next.pack_forget()
 
-        # --- 回答ボタン（方針A：FOLD / RAISE / LIMP_CALL） ---
-        ans = tk.Frame(root)
-        ans.pack(padx=10, pady=5)
+        # --- 回答ボタン（通常） ---
+        self.ans_frame = tk.Frame(root)
+        self.ans_frame.pack(padx=10, pady=5)
 
-        self.btn_fold = tk.Button(ans, text="FOLD", width=10, command=lambda: self.on_answer("FOLD"))
-        self.btn_raise = tk.Button(ans, text="RAISE", width=12, command=lambda: self.on_answer("RAISE"))
-        self.btn_limp_call = tk.Button(ans, text="LIMP_CALL", width=12, command=lambda: self.on_answer("LIMP_CALL"))
-
+        self.btn_fold = tk.Button(self.ans_frame, text="FOLD", width=10, command=lambda: self.on_answer("FOLD"))
+        self.btn_raise = tk.Button(self.ans_frame, text="RAISE", width=12, command=lambda: self.on_answer("RAISE"))
+        self.btn_limp_call = tk.Button(self.ans_frame, text="LIMP_CALL", width=12, command=lambda: self.on_answer("LIMP_CALL"))
         self.btn_fold.pack(side=tk.LEFT, padx=5)
         self.btn_raise.pack(side=tk.LEFT, padx=5)
         self.btn_limp_call.pack(side=tk.LEFT, padx=5)
 
-        cards_frame = tk.Frame(root)
-        cards_frame.pack(padx=10, pady=10)
+        # --- 2段目ボタン（Frameは作るが、最初は pack しない） ---
+        self.followup_frame = tk.Frame(root)
+
+        self.btn_bb2 = tk.Button(self.followup_frame, text="2", width=8, command=lambda: self.on_answer("2"))
+        self.btn_bb225 = tk.Button(self.followup_frame, text="2.25", width=8, command=lambda: self.on_answer("2.25"))
+        self.btn_bb25 = tk.Button(self.followup_frame, text="2.5", width=8, command=lambda: self.on_answer("2.5"))
+        self.btn_bb3 = tk.Button(self.followup_frame, text="3", width=8, command=lambda: self.on_answer("3"))
+        self.btn_bb2.pack(side=tk.LEFT, padx=5)
+        self.btn_bb225.pack(side=tk.LEFT, padx=5)
+        self.btn_bb25.pack(side=tk.LEFT, padx=5)
+        self.btn_bb3.pack(side=tk.LEFT, padx=5)
+
+        # Cards（ここを before=... の基準にするので、self に保持）
+        self.cards_frame = tk.Frame(root)
+        self.cards_frame.pack(padx=10, pady=10)
 
         self.card_labels = [
-            tk.Label(cards_frame, text="card1"),
-            tk.Label(cards_frame, text="card2"),
+            tk.Label(self.cards_frame, text="card1"),
+            tk.Label(self.cards_frame, text="card2"),
         ]
         self.card_labels[0].grid(row=0, column=0, padx=8)
         self.card_labels[1].grid(row=0, column=1, padx=8)
@@ -106,14 +116,24 @@ class PokerTrainerUI:
     # -------------------------
     # UI -> Controller
     # -------------------------
-    def start_juego(self) -> None:
-        # 開始後に何度も押されるとややこしいので無効化
-        self.btn_juego.configure(state=tk.DISABLED)
-        # controller の新基準メソッド名に統一
-        self.controller.start_juego_or()
+    def _lock_difficulty_buttons(self) -> None:
+        self.btn_juego_b.configure(state=tk.DISABLED)
+        self.btn_juego_i.configure(state=tk.DISABLED)
+        self.btn_juego_a.configure(state=tk.DISABLED)
+
+    def start_juego_beginner(self) -> None:
+        self._lock_difficulty_buttons()
+        self.controller.start_juego_beginner()
+
+    def start_juego_intermediate(self) -> None:
+        self._lock_difficulty_buttons()
+        self.controller.start_juego_intermediate()
+
+    def start_juego_advanced(self) -> None:
+        self._lock_difficulty_buttons()
+        self.controller.start_juego_advanced()
 
     def on_answer(self, action: str) -> None:
-        # controller.submit は user_action のみ受ける（hand/pos は context から）
         self.controller.submit(user_action=action)
 
     def on_next(self) -> None:
@@ -143,10 +163,27 @@ class PokerTrainerUI:
         self.txt.insert(tk.END, s)
 
     # -------------------------
+    # Follow-up buttons
+    # -------------------------
+    def show_followup_size_buttons(self) -> None:
+        self.btn_fold.configure(state=tk.DISABLED)
+        self.btn_raise.configure(state=tk.DISABLED)
+        self.btn_limp_call.configure(state=tk.DISABLED)
+
+        # ★ cards_frame の直前に差し込む（これで必ず見える位置に出る）
+        self.followup_frame.pack(before=self.cards_frame, padx=10, pady=5)
+
+    def hide_followup_size_buttons(self) -> None:
+        self.btn_fold.configure(state=tk.NORMAL)
+        self.btn_raise.configure(state=tk.NORMAL)
+        self.btn_limp_call.configure(state=tk.NORMAL)
+        self.followup_frame.pack_forget()
+
+    # -------------------------
     # Card image
     # -------------------------
     def _set_card_image(self, label: tk.Label, card_code: str) -> None:
-        from PIL import Image, ImageTk  # Pillow 必須
+        from PIL import Image, ImageTk
 
         rank = card_code[0].upper()
         suit = card_code[1].lower()
@@ -162,7 +199,7 @@ class PokerTrainerUI:
 
         tk_img = ImageTk.PhotoImage(img)
         label.configure(image=tk_img)
-        label.image = tk_img  # 参照保持
+        label.image = tk_img
 
 
 if __name__ == "__main__":

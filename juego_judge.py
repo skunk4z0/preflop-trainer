@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 @dataclass
 class JudgeResult:
-    action: str                 # "FOLD" or "RAISE" or "LIMP_CALL"(必要なら)
+    action: str
     correct: bool
     reason: str
     debug: Dict[str, Any]
@@ -19,89 +19,123 @@ class JUEGOJudge:
     def __init__(self, repo) -> None:
         self.repo = repo
 
-    # =========================
-    # OR（EP/MP/CO/BTN）
-    # =========================
-    def judge_or(self, position: str, hand: str, user_action: str, loose: bool) -> JudgeResult:
+    # -------------------------
+    # small helpers
+    # -------------------------
+    def _repo_get_tag(self, kind: str, position: str, hand: str):
         """
-        OR（EP/MP/CO/BTN）:
-        - repo が返す tag は config の REF_COLOR_CELLS["OR"] に合わせる想定
-          例: "TIGHT" / "LOOSE" / (不一致は repo 側で "FOLD")
+        repo.get_tag_for_hand が
+          - tag だけ返す
+          - (tag, repo_dbg) を返す
+        どちらでも動くようにする。
         """
-        kind = "OR"
-
-        tag, repo_dbg = self.repo.get_tag_for_hand(kind, position, hand)
-
-        # 正解アクション決定
-        if tag == "TIGHT":
-            correct_action = "RAISE"
-        elif tag == "LOOSE":
-            correct_action = "RAISE" if loose else "FOLD"
+        res = self.repo.get_tag_for_hand(kind, position, hand)
+        if isinstance(res, tuple) and len(res) == 2:
+            tag, repo_dbg = res
         else:
-            correct_action = "FOLD"
+            tag, repo_dbg = res, {}
+        return tag, repo_dbg
 
+    def _parse_limp_tag_to_max_bb(self, tag: str) -> Optional[float]:
+        """
+        "LimpCx2o" / "LimpCx2.25o" / "LimpCx2.5o" / "LimpCx3o"
+        から 2.0 / 2.25 / 2.5 / 3.0 を取り出す。
+        """
+        if not tag:
+            return None
+        t = str(tag).strip()
+        if not t.upper().startswith("LIMPCX"):
+            return None
+
+        # "LimpCx" の後〜末尾の "o"/"O" の前を数値として読む
+        body = t[len("LimpCx") :].strip()
+        if body.lower().endswith("o"):
+            body = body[:-1]
+
+        try:
+            return float(body)
+        except Exception:
+            return None
+
+    # -------------------------
+    # OR (EP/MP/CO/BTN)
+    # ※あなたの既存挙動を壊さないため、必要最小限の形
+    # -------------------------
+    def judge_or(self, position: str, hand: str, user_action: str, loose: bool) -> JudgeResult:
+        kind = "OR"
+        tag, repo_dbg = self._repo_get_tag(kind, position, hand)
+
+        t = (tag or "").strip().upper()
         ua = (user_action or "").strip().upper()
-        is_correct = (ua == correct_action)
-        reason = self._make_reason_or(position, hand, tag, loose)
+
+        # 既存仕様（サマリー準拠）
+        # 通常：TIGHT=RAISE、LOOSE/FOLD=FOLD
+        # ルースあり：TIGHT/LOOSE=RAISE、FOLD=FOLD
+        if loose:
+            correct_action = "RAISE" if t in {"TIGHT", "LOOSE"} else "FOLD"
+        else:
+            correct_action = "RAISE" if t == "TIGHT" else "FOLD"
+
+        correct = (ua == correct_action)
+        reason = f"Tag={tag} -> {correct_action}"
 
         debug = {
             "kind": kind,
             "position": position,
             "hand": hand,
             "tag": tag,
+            "tag_upper": t,
             "loose": loose,
             "user_action": ua,
             "correct_action": correct_action,
-            "repo": repo_dbg,   # 根拠はすべてここ（grid座標/色/参照色）
+            "repo": repo_dbg,
         }
 
-        return JudgeResult(
-            action=correct_action,
-            correct=is_correct,
-            reason=reason,
-            debug=debug,
-        )
+        return JudgeResult(action=correct_action, correct=correct, reason=reason, debug=debug)
 
-    # =========================
-    # OR_SB（SB）
-    # =========================
+    # -------------------------
+    # OR_SB (SB)
+    # 重要：detail_tag を debug に必ず残す（2段目に必要）
+    # -------------------------
     def judge_or_sb(self, position: str, hand: str, user_action: str, loose: bool) -> JudgeResult:
-        """
-        OR_SB（SB）:
-        - repo が返す tag は config の REF_COLOR_CELLS["OR_SB"] に合わせる想定
-          例: "RAISE_3BB", "LimpCx3o", ... / (不一致は "FOLD")
-        - 以前仕様優先＝色タグをそのまま「正解アクション」に写像する
-        """
         kind = "OR_SB"
 
-        tag, repo_dbg = self.repo.get_tag_for_hand(kind, position, hand)
+        # ★ここを統一：repoの返り値が tag単体でも (tag,dbg) でも動く
+        tag, repo_dbg = self._repo_get_tag(kind, position, hand)
 
-        # 正解アクション決定（最小：タグ→アクション）
-        # ここは UI のボタン仕様に合わせて返す文字列を合わせる必要あり
-        # ひとまず:
-        # - "RAISE_3BB" は RAISE
-        # - "LimpC..." は LIMP_CALL（= limpcall）
-        # - それ以外/不一致は FOLD
-        if tag == "RAISE_3BB":
+        # 正規化（空白除去）
+        tag_norm = (tag or "").strip()
+        t = tag_norm.upper()
+
+        if t == "RAISE_3BB":
             correct_action = "RAISE"
-        elif tag.startswith("LIMPC"):
+        elif t.startswith("LIMPC"):
             correct_action = "LIMP_CALL"
         else:
             correct_action = "FOLD"
 
         ua = (user_action or "").strip().upper()
         is_correct = (ua == correct_action)
-        reason = self._make_reason_or_sb(position, hand, tag)
+
+        # ★未定義関数を使わない（まず落ちないことを優先）
+        reason = f"Tag={tag_norm} -> {correct_action}"
 
         debug = {
             "kind": kind,
             "position": position,
             "hand": hand,
+
+            # ★ここが2段目に必要（すでに正しい）
+            "detail_tag": tag_norm,  # 例: "LimpCx2.25o"
+
             "tag": tag,
-            "loose": loose,  # 現時点では SB 判定に未使用（将来拡張用に保持）
+            "tag_upper": t,
+            "loose": loose,  # OR_SBでは未使用だが保持は可
             "user_action": ua,
             "correct_action": correct_action,
             "repo": repo_dbg,
+            "followup_expected_max_bb": self._parse_limp_tag_to_max_bb(tag_norm),
+
         }
 
         return JudgeResult(
@@ -111,31 +145,37 @@ class JUEGOJudge:
             debug=debug,
         )
 
-    # =========================
-    # 理由文
-    # =========================
-    def _make_reason_or(self, position: str, hand: str, tag: str, loose: bool) -> str:
-        if tag == "FOLD":
-            return f"{position} のORレンジでは {hand} はFOLD"
 
-        if tag == "TIGHT":
-            return f"{position} のTIGHTレンジに {hand} は含まれる → RAISE"
+    # -------------------------
+    # BB_ISO（別モード用：コール/リンプ後のBB判断）
+    # ※ controller が呼ぶので最低限用意
+    # -------------------------
+    def judge_bb_iso(self, position: str, hand: str, user_action: str, limpers: int, loose: bool) -> JudgeResult:
+        kind = "BB_ISO"
+        tag, repo_dbg = self._repo_get_tag(kind, position, hand)
 
-        if tag == "LOOSE":
-            if loose:
-                return f"{position} のLOOSEレンジに {hand} は含まれる（ルースあり）→ RAISE"
-            return f"{position} のLOOSEレンジだが（ルースなし）→ FOLD"
+        t = (tag or "").strip().upper()
+        ua = (user_action or "").strip().upper()
 
-        return f"判定不能（tag={tag}）"
+        # 表のタグ仕様に合わせて調整してください（最小の仮置き）
+        # - tag が "RAISE_*" 系なら RAISE
+        # - それ以外は CHECK
+        correct_action = "RAISE" if t.startswith("RAISE") else "CHECK"
 
-    def _make_reason_or_sb(self, position: str, hand: str, tag: str) -> str:
-        if tag == "FOLD":
-            return f"{position}（SB）のORレンジでは {hand} はFOLD"
+        correct = (ua == correct_action)
+        reason = f"Tag={tag} -> {correct_action}"
 
-        if tag == "RAISE_3BB":
-            return f"{position}（SB）のレンジでは {hand} はRAISE（3BB）"
+        debug = {
+            "kind": kind,
+            "position": position,
+            "hand": hand,
+            "tag": tag,
+            "tag_upper": t,
+            "limpers": limpers,
+            "loose": loose,
+            "user_action": ua,
+            "correct_action": correct_action,
+            "repo": repo_dbg,
+        }
 
-        if tag.upper().startswith("LIMPC"):
-            return f"{position}（SB）のレンジでは {hand} はLimp/Call（tag={tag}）"
-
-        return f"判定不能（tag={tag}）"
+        return JudgeResult(action=correct_action, correct=correct, reason=reason, debug=debug)
