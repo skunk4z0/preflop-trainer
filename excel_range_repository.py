@@ -1,6 +1,7 @@
 # excel_range_repository.py
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
@@ -106,6 +107,27 @@ def _hand_key_to_rc(hand_key: str) -> Tuple[int, int]:
 
 
 # =========================
+# Position normalization (anchor search)
+# =========================
+
+_POS_NORM_RE = re.compile(r"[^A-Z0-9]+")
+
+
+def _norm_pos_text(x: Any) -> str:
+    """
+    posセル探索用の正規化。
+    - 大文字化
+    - 英数字以外（空白/改行/記号/_ 等）を除去
+    例:
+      "BB vs SB" -> "BBVSSB"
+      "BBvsSB "  -> "BBVSSB"
+    """
+    if x is None:
+        return ""
+    return _POS_NORM_RE.sub("", str(x).strip().upper())
+
+
+# =========================
 # Anchor match model
 # =========================
 
@@ -200,16 +222,19 @@ class ExcelRangeRepository:
         a1_range = self.aa_search_ranges[kind]
         candidates: list[AnchorMatch] = []
 
+        pos_norm = _norm_pos_text(pos)
+
         for row in self.ws[a1_range]:
             for cell in row:
-                if cell.value != pos:
+                if _norm_pos_text(cell.value) != pos_norm:
                     continue
 
                 pr, pc = cell.row, cell.column
                 aa_r, aa_c = pr + 3, pc - 2
                 aa_cell = self.ws.cell(row=aa_r, column=aa_c)
 
-                if aa_cell.value != "AA":
+                aa_val = "" if aa_cell.value is None else str(aa_cell.value).strip().upper()
+                if aa_val != "AA":
                     if self.enable_debug:
                         print(
                             f"[REPO][ANCHOR] pos found at {cell.coordinate} but AA check failed "

@@ -36,7 +36,7 @@ CARD_IMAGE_DIR = r"C:\MyPokerApp\cards"
 # posセルから (down=+3, left=-2) が "AA" アンカー
 AA_SEARCH_RANGES = {
     "OR":    "F11:BL26",     # EP〜BTN
-    "ROL":   "U28:BL43",
+    "ROL":   "U28:DE43",
     "OR_SB": "CC11:CP26",    # SB 用（特殊）
 }
 

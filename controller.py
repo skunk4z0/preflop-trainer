@@ -17,10 +17,10 @@ class Difficulty(Enum):
 class ProblemType(Enum):
     YOKOSAWA_OPEN = auto()
 
-    # JUEGO系（難易度で出題プールを作る）
+    # JUEGO系
     JUEGO_OR = auto()        # 初級：EP/MP/CO/BTN の OR（ルース分岐あり）
     JUEGO_OR_SB = auto()     # 中級：SB の OR_SB（ルース分岐なし）
-    JUEGO_ROL = auto()       # 中級：将来追加（未実装）
+    JUEGO_ROL = auto()       # 上級：ROL（リンプインに対する対応）
     JUEGO_BB_ISO = auto()    # 別モード：BBアイソ（必要なら使う）
 
 
@@ -30,18 +30,21 @@ class SBLimpFollowUpContext:
     2段目：SBでLimpCが正解だった場合に出す追加問題
     「BBのオープンに対して、何BBまでコールするか（閾値）」を選ばせる
     """
-    hand_key: str                # 例: "AKo"
-    expected_max_bb: float       # 例: 2.25
-    source_tag: str              # 例: "LimpCx2.25o"
+    hand_key: str
+    expected_max_bb: float
+    source_tag: str
 
 
 @dataclass(frozen=True)
 class OpenRaiseProblemContext:
     hole_cards: Tuple[str, str]
-    position: str                       # "EP"/"MP"/"CO"/"BTN"/"SB"/"BB"
-    open_size_bb: float                 # 表示用
-    loose_player_exists: bool           # OR用（OR_SBでは常にFalse）
-    excel_hand_key: str                 # "AKs" / "AKo" / "AA"
+    # OR: "EP"/"MP"/"CO"/"BTN"
+    # OR_SB: "SB"
+    # ROL: "MP"/"CO"/"BTN"/"SB"/"BB_OOP"/"BBvsSB"
+    position: str
+    open_size_bb: float                 # 表示用（OR/OR_SBはopen size, ROLはraise size）
+    loose_player_exists: bool           # OR/ROL用（OR_SBでは常にFalse）
+    excel_hand_key: str
     excel_position_key: str
     limpers: int = 0
 
@@ -62,10 +65,10 @@ class GameController:
         ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
         self.deck = [r + s for r, s in itertools.product(ranks, suits)]
 
-        # 出題プール（将来ここに追加していくだけで拡張できる）
+        # 出題プール
         self.pool_beginner = [ProblemType.JUEGO_OR]
-        self.pool_intermediate = [ProblemType.JUEGO_OR_SB]   # 将来: + [ProblemType.JUEGO_ROL]
-        self.pool_advanced: list[ProblemType] = []           # 将来追加
+        self.pool_intermediate = [ProblemType.JUEGO_OR_SB]     # 中級はOR_SB固定
+        self.pool_advanced = [ProblemType.JUEGO_ROL]           # 上級はROL（現状はこれだけ）
 
     # =========================
     # 内部ログ
@@ -88,15 +91,19 @@ class GameController:
 
     def start_juego_beginner(self) -> None:
         self.difficulty = Difficulty.BEGINNER
+        self.current_problem = None   # ★追加
         self.new_question()
 
     def start_juego_intermediate(self) -> None:
         self.difficulty = Difficulty.INTERMEDIATE
+        self.current_problem = None   # ★追加
         self.new_question()
 
     def start_juego_advanced(self) -> None:
         self.difficulty = Difficulty.ADVANCED
+        self.current_problem = None   # ★追加
         self.new_question()
+
 
     # =========================
     # 次の問題
@@ -149,6 +156,8 @@ class GameController:
             self.context = self._generate_or_problem_beginner()
             ctx = self.context
 
+            self._apply_answer_mode("OR")
+
             self.ui.deal_cards(ctx.hole_cards)
             if hasattr(self.ui, "set_hand_pos"):
                 try:
@@ -156,9 +165,7 @@ class GameController:
                 except Exception:
                     pass
 
-            # ORはルース分岐あり（表示とフラグ一致）
             loose_msg = "｜ルースなplayerがいます" if ctx.loose_player_exists else ""
-
             self.ui.show_text(
                 "【JUEGO 初級】オープンレイズ判断（OR）｜"
                 f"Pos: {ctx.position}｜"
@@ -174,6 +181,8 @@ class GameController:
             self.context = self._generate_or_sb_problem_intermediate()
             ctx = self.context
 
+            self._apply_answer_mode("OR_SB")
+
             self.ui.deal_cards(ctx.hole_cards)
             if hasattr(self.ui, "set_hand_pos"):
                 try:
@@ -181,7 +190,6 @@ class GameController:
                 except Exception:
                     pass
 
-            # OR_SBはルース分岐不要 → 表示しない
             self.ui.show_text(
                 "【JUEGO 中級】SBオープン判断（OR_SB）｜"
                 "Pos: SB｜"
@@ -190,11 +198,35 @@ class GameController:
             return
 
         # -------------------------
-        # 中級：ROL（将来追加）
+        # 上級：ROL
         # -------------------------
         if self.current_problem == ProblemType.JUEGO_ROL:
-            self.context = None
-            self.ui.show_text("【JUEGO 中級】ROL は未実装です（後で追加します）")
+            self.context = self._generate_rol_problem()
+            ctx = self.context
+
+            # 位置でボタンモードを切替（UIが対応していれば）
+            if ctx.position == "BBvsSB":
+                self._apply_answer_mode("ROL_BBVS_SB")   # CHECK / RAISE
+            elif ctx.position == "BB_OOP":
+                self._apply_answer_mode("ROL_BB_OOP")    # FOLD / CALL / RAISE
+            else:
+                self._apply_answer_mode("ROL_NONBB")     # FOLD / RAISE / CALL
+
+
+            self.ui.deal_cards(ctx.hole_cards)
+            if hasattr(self.ui, "set_hand_pos"):
+                try:
+                    self.ui.set_hand_pos(hand=ctx.excel_hand_key, pos=ctx.position)
+                except Exception:
+                    pass
+
+            fish_msg = "｜ルースなplayerがいます" if ctx.loose_player_exists else ""
+            self.ui.show_text(
+                "【JUEGO 上級】リンプインへの対応（ROL）｜"
+                f"Pos: {ctx.position}｜"
+                f"Raise={ctx.open_size_bb}BB"
+                f"{fish_msg}"
+            )
             return
 
         # -------------------------
@@ -203,21 +235,31 @@ class GameController:
         self.ui.show_text("内部：未知の問題タイプです")
         return
 
+    def _apply_answer_mode(self, mode: str) -> None:
+        """
+        UI側が対応していれば、回答ボタンの表示・意味をモードで切り替える。
+        UI未実装でも落ちないようにガード。
+        - OR / OR_SB: FOLD, RAISE, LIMP_CALL
+        - ROL_NONBB: FOLD, RAISE, CALL
+        - ROL_BB: CHECK, RAISE
+        """
+        if hasattr(self.ui, "set_answer_mode"):
+            try:
+                self.ui.set_answer_mode(mode)
+            except Exception:
+                pass
+
     # =========================
     # Follow-up helpers
     # =========================
     def _parse_limp_tag_to_max_bb(self, tag: str) -> Optional[float]:
-        """
-        "LimpCx2o" / "LimpCx2.25o" / "LimpCx2.5o" / "LimpCx3o"
-        から 2.0 / 2.25 / 2.5 / 3.0 を取り出す。
-        """
         if not tag:
             return None
         t = str(tag).strip()
         if not t.upper().startswith("LIMPCX"):
             return None
 
-        body = t[len("LimpCx") :].strip()
+        body = t[len("LimpCx"):].strip()
         if body.lower().endswith("o"):
             body = body[:-1]
 
@@ -227,9 +269,6 @@ class GameController:
             return None
 
     def _enter_sb_limp_followup(self, hand_key: str, tag: str) -> bool:
-        """
-        OR_SBのLimpC正解後に2段目へ遷移して問題文を表示する。
-        """
         max_bb = self._parse_limp_tag_to_max_bb(tag)
         if max_bb is None:
             return False
@@ -240,25 +279,90 @@ class GameController:
             source_tag=tag,
         )
 
-        # Nextは出さない（まだ2段目が残っている）
         if hasattr(self.ui, "hide_next_button"):
             try:
                 self.ui.hide_next_button()
             except Exception:
                 pass
 
-        # 2段目ボタンを表示（UI側が実装済みの場合）
         if hasattr(self.ui, "show_followup_size_buttons"):
             try:
                 self.ui.show_followup_size_buttons()
             except Exception as e:
-                # 握りつぶさない：原因を画面に出す
                 self.ui.show_text(f"UIエラー：show_followup_size_buttons に失敗: {e}")
                 return False
         else:
             self.ui.show_text("UIエラー：show_followup_size_buttons が見つかりません")
             return False
 
+        return True
+
+    # =========================
+    # Problem generation
+    # =========================
+    def _generate_or_problem_beginner(self) -> OpenRaiseProblemContext:
+        card1, card2 = random.sample(self.deck, 2)
+        position = random.choice(["EP", "MP", "CO", "BTN"])
+        loose = random.choice([True, False])
+
+        open_size = 2.5 if position == "BTN" else 3.0
+        hand_key = self._to_hand_key(card1, card2)
+
+        return OpenRaiseProblemContext(
+            hole_cards=(card1, card2),
+            position=position,
+            open_size_bb=open_size,
+            loose_player_exists=loose,
+            excel_hand_key=hand_key,
+            excel_position_key=position,
+            limpers=0,
+        )
+
+    def _generate_or_sb_problem_intermediate(self) -> OpenRaiseProblemContext:
+        card1, card2 = random.sample(self.deck, 2)
+        hand_key = self._to_hand_key(card1, card2)
+
+        return OpenRaiseProblemContext(
+            hole_cards=(card1, card2),
+            position="SB",
+            open_size_bb=3.0,
+            loose_player_exists=False,
+            excel_hand_key=hand_key,
+            excel_position_key="SB",
+            limpers=0,
+        )
+
+    def _generate_rol_problem(self) -> OpenRaiseProblemContext:
+        card1, card2 = random.sample(self.deck, 2)
+        position = random.choice(["MP", "CO", "BTN", "SB", "BB_OOP", "BBvsSB"])
+        loose = random.choice([True, False])  # ROLvsFISH のため
+        raise_size = 4.0 if position == "BBvsSB" else 5.0
+        hand_key = self._to_hand_key(card1, card2)
+
+        return OpenRaiseProblemContext(
+            hole_cards=(card1, card2),
+            position=position,
+            open_size_bb=raise_size,          # 表示用（ROLのレイズ額）
+            loose_player_exists=loose,
+            excel_hand_key=hand_key,
+            excel_position_key=position,
+            limpers=1,
+        )
+
+    def _to_hand_key(self, c1: str, c2: str) -> str:
+        r1, s1 = c1[0].upper(), c1[1].lower()
+        r2, s2 = c2[0].upper(), c2[1].lower()
+
+        order = "AKQJT98765432"
+        if order.index(r1) > order.index(r2):
+            r1, r2 = r2, r1
+            s1, s2 = s2, s1
+
+        if r1 == r2:
+            return r1 + r2
+
+        suited = (s1 == s2)
+        return r1 + r2 + ("s" if suited else "o")
 
     # =========================
     # 回答
@@ -268,16 +372,16 @@ class GameController:
             self.ui.show_text("アクションが未指定です")
             return
 
-        ua = (user_action or "").strip().upper()
+        ua_raw = (user_action or "").strip().upper()
 
         # -------------------------
         # 2段目待ちなら、ここで2段目を採点して終了
         # -------------------------
         if self.followup is not None:
             try:
-                chosen = float(ua)
+                chosen = float(ua_raw)
             except Exception:
-                self.ui.show_text(f"数値を選択してください（2 / 2.25 / 2.5 / 3）。入力={ua}")
+                self.ui.show_text(f"数値を選択してください（2 / 2.25 / 2.5 / 3）。入力={ua_raw}")
                 return
 
             expected = self.followup.expected_max_bb
@@ -304,14 +408,6 @@ class GameController:
                 self.ui.show_text(f"不正解：正解は {expected}BB（あなた={chosen}BB、元タグ: {src}）")
             return
 
-        # -------------------------
-        # 通常回答の許可集合
-        # -------------------------
-        allowed = {"FOLD", "RAISE", "LIMP_CALL"}
-        if ua not in allowed:
-            self.ui.show_text(f"不正なアクションです: {ua}")
-            return
-
         if self.current_problem is None:
             self.ui.show_text("難易度を選択してください（初級/中級/上級）")
             return
@@ -319,6 +415,21 @@ class GameController:
         if self.context is None:
             self.ui.show_text("内部エラー：Context is missing")
             return
+
+        # -------------------------
+        # 通常回答の許可集合（問題タイプで切替）
+        # -------------------------
+        if self.current_problem == ProblemType.JUEGO_ROL:
+            allowed = {"FOLD", "RAISE", "CALL", "CHECK", "LIMP_CALL"}  # LIMP_CALLは互換
+        else:
+            allowed = {"FOLD", "RAISE", "LIMP_CALL"}
+
+        if ua_raw not in allowed:
+            self.ui.show_text(f"不正なアクションです: {ua_raw}")
+            return
+
+        # ROL互換：LIMP_CALL を CALL と同義に扱う
+        ua = "CALL" if (self.current_problem == ProblemType.JUEGO_ROL and ua_raw == "LIMP_CALL") else ua_raw
 
         result: Any = None
         is_correct = False
@@ -339,22 +450,31 @@ class GameController:
                 )
 
             # -------------------------
-            # 中級：OR_SB（ルース分岐なし＝looseは常にFalse固定）
+            # 中級：OR_SB（ルース分岐なし）
             # -------------------------
             elif self.current_problem == ProblemType.JUEGO_OR_SB:
                 result = self.juego_judge.judge_or_sb(
                     position="SB",
                     hand=ctx.excel_hand_key,
                     user_action=ua,
-                    loose=False,  # 明示：OR_SBでは不要
+                    loose=False,
                 )
 
             # -------------------------
-            # 将来
+            # 上級：ROL
             # -------------------------
             elif self.current_problem == ProblemType.JUEGO_ROL:
-                self.ui.show_text("ROLは未実装です")
-                return
+                if not hasattr(self.juego_judge, "judge_rol"):
+                    self.ui.show_text("内部エラー：judge_rol が未実装です（juego_judge.py に追加してください）")
+                    return
+
+                result = self.juego_judge.judge_rol(
+                    position=ctx.position,
+                    hand=ctx.excel_hand_key,
+                    user_action=ua,
+                    loose=ctx.loose_player_exists,
+                )
+
             else:
                 self.ui.show_text("内部：未知の問題タイプです")
                 return
@@ -371,18 +491,15 @@ class GameController:
             # -------------------------
             # OR_SBで LimpC 正解なら 2段目へ
             # -------------------------
-            # OR_SBで LimpC 正解なら 2段目へ（judgeが計算したmax_bbを優先）
             if self.current_problem == ProblemType.JUEGO_OR_SB and is_correct:
                 dbg2 = getattr(result, "debug", {}) or {}
-
                 detail_tag = str(dbg2.get("detail_tag") or dbg2.get("tag") or "").strip()
                 max_bb = dbg2.get("followup_expected_max_bb", None)
 
-                # ここで状況をログに出す（enable_debug=True のときのみ）
                 self._log(f"[CTRL] followup check: detail_tag={detail_tag!r} max_bb={max_bb!r}")
 
                 if detail_tag.upper().startswith("LIMPC"):
-                    # max_bb が取れていればそれを使って確実に遷移
+                    # judgeが計算したmax_bbを優先
                     if isinstance(max_bb, (int, float)) and max_bb > 0:
                         self.followup = SBLimpFollowUpContext(
                             hand_key=ctx.excel_hand_key,
@@ -390,9 +507,15 @@ class GameController:
                             source_tag=detail_tag,
                         )
                         if hasattr(self.ui, "hide_next_button"):
-                            self.ui.hide_next_button()
+                            try:
+                                self.ui.hide_next_button()
+                            except Exception:
+                                pass
                         if hasattr(self.ui, "show_followup_size_buttons"):
-                            self.ui.show_followup_size_buttons()
+                            try:
+                                self.ui.show_followup_size_buttons()
+                            except Exception:
+                                pass
 
                         self.ui.show_text(
                             "正解（リンプイン）。追加問題：\n"
@@ -401,10 +524,9 @@ class GameController:
                         )
                         return
 
-                    # max_bb が無い場合は従来どおりパースして遷移（保険）
+                    # 保険：max_bbが取れない場合はパースで遷移
                     if self._enter_sb_limp_followup(hand_key=ctx.excel_hand_key, tag=detail_tag):
                         return  # 2段目待ちなので Next は出さない
-
 
         except Exception as e:
             self.ui.show_text(f"内部エラー：{e}")
@@ -422,53 +544,3 @@ class GameController:
             self.ui.show_text(f"正解：{reason}")
         else:
             self.ui.show_text(f"不正解：{reason}")
-
-    # =========================
-    # Problem generation
-    # =========================
-    def _generate_or_problem_beginner(self) -> OpenRaiseProblemContext:
-        card1, card2 = random.sample(self.deck, 2)
-        position = random.choice(["EP", "MP", "CO", "BTN"])   # ← SBは初級ORから除外
-        loose = random.choice([True, False])
-
-        open_size = 2.5 if position == "BTN" else 3.0
-        hand_key = self._to_hand_key(card1, card2)
-
-        return OpenRaiseProblemContext(
-            hole_cards=(card1, card2),
-            position=position,
-            open_size_bb=open_size,
-            loose_player_exists=loose,
-            excel_hand_key=hand_key,
-            excel_position_key=position,
-            limpers=0,
-        )
-
-    def _generate_or_sb_problem_intermediate(self) -> OpenRaiseProblemContext:
-        card1, card2 = random.sample(self.deck, 2)
-        hand_key = self._to_hand_key(card1, card2)
-
-        return OpenRaiseProblemContext(
-            hole_cards=(card1, card2),
-            position="SB",
-            open_size_bb=3.0,                 # 表が3BB想定なら固定でOK
-            loose_player_exists=False,         # ← 明示：OR_SBでは不要
-            excel_hand_key=hand_key,
-            excel_position_key="SB",
-            limpers=0,
-        )
-
-    def _to_hand_key(self, c1: str, c2: str) -> str:
-        r1, s1 = c1[0].upper(), c1[1].lower()
-        r2, s2 = c2[0].upper(), c2[1].lower()
-
-        order = "AKQJT98765432"
-        if order.index(r1) > order.index(r2):
-            r1, r2 = r2, r1
-            s1, s2 = s2, s1
-
-        if r1 == r2:
-            return r1 + r2
-
-        suited = (s1 == s2)
-        return r1 + r2 + ("s" if suited else "o")

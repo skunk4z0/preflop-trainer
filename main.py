@@ -55,8 +55,8 @@ class PokerTrainerUI:
         top.pack(padx=10, pady=10)
 
         self.btn_juego_b = tk.Button(top, text="JUEGO 初級(OR)", command=self.start_juego_beginner)
-        self.btn_juego_i = tk.Button(top, text="JUEGO 中級(OR_SB/ROL)", command=self.start_juego_intermediate)
-        self.btn_juego_a = tk.Button(top, text="JUEGO 上級(未)", command=self.start_juego_advanced)
+        self.btn_juego_i = tk.Button(top, text="JUEGO 中級(OR_SB)", command=self.start_juego_intermediate)
+        self.btn_juego_a = tk.Button(top, text="JUEGO 上級(ROL)", command=self.start_juego_advanced)
         self.btn_juego_b.pack(side=tk.LEFT, padx=5)
         self.btn_juego_i.pack(side=tk.LEFT, padx=5)
         self.btn_juego_a.pack(side=tk.LEFT, padx=5)
@@ -112,10 +112,74 @@ class PokerTrainerUI:
 
         self.txt = tk.Text(root, height=10, width=80)
         self.txt.pack(padx=10, pady=10)
-
     # -------------------------
     # UI -> Controller
     # -------------------------
+    def set_answer_mode(self, mode: str) -> None:
+        """
+        mode:
+          - "OR" / "OR_SB"      : FOLD / RAISE / LIMP_CALL
+          - "ROL_NONBB"         : FOLD / RAISE / CALL
+          - "ROL_BB_OOP"        : FOLD / CHECK / RAISE
+          - "ROL_BBVS_SB"       : CHECK / RAISE
+        """
+        m = (mode or "").strip().upper()
+
+        # まず必ず全ボタンを外す（前状態の影響を断つ）
+        for b in (self.btn_fold, self.btn_raise, self.btn_limp_call):
+            try:
+                b.pack_forget()
+            except Exception:
+                pass
+
+        if m in ("OR", "OR_SB"):
+            self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
+            self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
+            self.btn_limp_call.config(text="LIMP_CALL", command=lambda: self.on_answer("LIMP_CALL"))
+
+            self.btn_fold.pack(side=tk.LEFT, padx=5)
+            self.btn_raise.pack(side=tk.LEFT, padx=5)
+            self.btn_limp_call.pack(side=tk.LEFT, padx=5)
+
+        elif m == "ROL_NONBB":
+            self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
+            self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
+            self.btn_limp_call.config(text="CALL", command=lambda: self.on_answer("CALL"))
+
+            self.btn_fold.pack(side=tk.LEFT, padx=5)
+            self.btn_raise.pack(side=tk.LEFT, padx=5)
+            self.btn_limp_call.pack(side=tk.LEFT, padx=5)
+
+        elif m == "ROL_BB_OOP":
+            # BB_OOP は FOLD / CALL / RAISE（CHECKは出さない）
+            self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
+            self.btn_limp_call.config(text="CALL", command=lambda: self.on_answer("CALL"))
+            self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
+
+            self.btn_fold.pack(side=tk.LEFT, padx=5)
+            self.btn_limp_call.pack(side=tk.LEFT, padx=5)
+            self.btn_raise.pack(side=tk.LEFT, padx=5)
+
+
+        elif m == "ROL_BBVS_SB":
+            # CHECK / RAISE の2択
+            self.btn_fold.config(text="CHECK", command=lambda: self.on_answer("CHECK"))
+            self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
+
+            self.btn_fold.pack(side=tk.LEFT, padx=5)
+            self.btn_raise.pack(side=tk.LEFT, padx=5)
+
+        else:
+            # 想定外は安全側でORに戻す
+            self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
+            self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
+            self.btn_limp_call.config(text="LIMP_CALL", command=lambda: self.on_answer("LIMP_CALL"))
+
+            self.btn_fold.pack(side=tk.LEFT, padx=5)
+            self.btn_raise.pack(side=tk.LEFT, padx=5)
+            self.btn_limp_call.pack(side=tk.LEFT, padx=5)
+
+
     def _lock_difficulty_buttons(self) -> None:
         self.btn_juego_b.configure(state=tk.DISABLED)
         self.btn_juego_i.configure(state=tk.DISABLED)
@@ -170,8 +234,10 @@ class PokerTrainerUI:
         self.btn_raise.configure(state=tk.DISABLED)
         self.btn_limp_call.configure(state=tk.DISABLED)
 
-        # ★ cards_frame の直前に差し込む（これで必ず見える位置に出る）
+        # ★順序固定：いったん外してから、必ず cards_frame の直前に差し込む
+        self.followup_frame.pack_forget()
         self.followup_frame.pack(before=self.cards_frame, padx=10, pady=5)
+
 
     def hide_followup_size_buttons(self) -> None:
         self.btn_fold.configure(state=tk.NORMAL)

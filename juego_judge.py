@@ -179,3 +179,64 @@ class JUEGOJudge:
         }
 
         return JudgeResult(action=correct_action, correct=correct, reason=reason, debug=debug)
+
+    @staticmethod
+    def expected_action_for_rol(position: str, tag: str, loose: bool):
+        pos = (position or "").strip()
+        t = (tag or "").strip().upper()
+
+        # BBvsSB 特例：AlwaysROL(4BB)以外は全部CHECK
+        if pos == "BBvsSB":
+            if t == "ALWAYSROL":
+                return ("RAISE", 4.0)
+            return ("CHECK", None)
+
+        # それ以外（MP/CO/BTN/SB/BB_OOP）
+        if t == "ALWAYSROL":
+            return ("RAISE", 5.0)
+
+        if t == "OLVSFISH":
+            return ("CALL", None)
+
+        if t == "ROLVSFISH":
+            return ("CALL", None) if loose else ("FOLD", None)
+
+        return ("FOLD", None)
+
+
+
+    def judge_rol(self, position: str, hand: str, user_action: str, loose: bool) -> JudgeResult:
+        kind = "ROL"
+        tag, repo_dbg = self._repo_get_tag(kind, position, hand)
+
+        tag_norm = (tag or "").strip()
+        exp_action, exp_raise_bb = self.expected_action_for_rol(position, tag_norm, loose)
+
+        ua = (user_action or "").strip().upper()
+
+        # UI互換：LIMP_CALL を CALL と同義に扱う（ROL用）
+        if ua == "LIMP_CALL":
+            ua = "CALL"
+
+        # 念のため：expected も正規化
+        exp_action_u = (exp_action or "").strip().upper()
+
+        is_correct = (ua == exp_action_u)
+
+        reason = f"Tag={tag_norm} -> {exp_action_u}" + (f" ({exp_raise_bb}BB)" if exp_raise_bb else "")
+
+        debug = {
+            "kind": kind,
+            "position": position,
+            "hand": hand,
+            "detail_tag": tag_norm,
+            "tag_upper": tag_norm.upper(),
+            "loose": loose,
+            "user_action": ua,
+            "correct_action": exp_action_u,
+            "expected_raise_size_bb": exp_raise_bb,
+            "repo": repo_dbg,
+        }
+
+        return JudgeResult(action=exp_action_u, correct=is_correct, reason=reason, debug=debug)
+
