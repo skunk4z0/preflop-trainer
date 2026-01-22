@@ -1,17 +1,29 @@
-# main.py
+﻿# main.py（PokerTrainerUI内に追記）
 from __future__ import annotations
 
+import re
 import os
 import tkinter as tk
-from tkinter import messagebox
-
+from tkinter import ttk, messagebox
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 from openpyxl import load_workbook
-
 import config
-from controller import GameController
+
+from openpyxl.workbook.workbook import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 from excel_range_repository import ExcelRangeRepository
 from juego_judge import JUEGOJudge
+from controller import GameController
 
+
+def _contrast_text_color(rgb: str) -> str:
+    try:
+        r = int(rgb[0:2], 16); g = int(rgb[2:4], 16); b = int(rgb[4:6], 16)
+        y = (r*299 + g*587 + b*114) / 1000
+        return "black" if y >= 150 else "white"
+    except Exception:
+        return "black"
 
 class PokerTrainerUI:
     CARD_W = 280
@@ -20,6 +32,7 @@ class PokerTrainerUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Poker Trainer")
+        self._range_popup = None
 
         # -------------------------
         # Excel / Repository 初期化
@@ -37,7 +50,7 @@ class PokerTrainerUI:
                 aa_search_ranges=config.AA_SEARCH_RANGES,
                 grid_topleft_offset=config.GRID_TOPLEFT_OFFSET,
                 ref_color_cells=config.REF_COLOR_CELLS,
-                enable_debug=True,
+                enable_debug=False,
             )
         except Exception as e:
             messagebox.showerror("Repository Error", f"Repository初期化に失敗:\n{e}")
@@ -198,6 +211,7 @@ class PokerTrainerUI:
         self.controller.start_juego_advanced()
 
     def on_answer(self, action: str) -> None:
+        self.lock_all_answer_buttons()         # ★追加：押した瞬間にロック
         self.controller.submit(user_action=action)
 
     def on_next(self) -> None:
@@ -206,6 +220,24 @@ class PokerTrainerUI:
     # -------------------------
     # Controller -> UI
     # -------------------------
+    def lock_all_answer_buttons(self) -> None:
+        """回答を1回に制限するため、回答系ボタンをすべて無効化"""
+        for b in (self.btn_fold, self.btn_raise, self.btn_limp_call,
+                  self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
+            try:
+                b.configure(state=tk.DISABLED)
+            except Exception:
+                pass
+
+    def unlock_all_answer_buttons(self) -> None:
+        """次の問題開始時に回答ボタンを再び有効化"""
+        for b in (self.btn_fold, self.btn_raise, self.btn_limp_call,
+                  self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
+            try:
+                b.configure(state=tk.NORMAL)
+            except Exception:
+                pass
+    
     def hide_next_button(self) -> None:
         self.btn_next.pack_forget()
 
@@ -230,20 +262,28 @@ class PokerTrainerUI:
     # Follow-up buttons
     # -------------------------
     def show_followup_size_buttons(self) -> None:
+        # 通常回答は無効のまま
         self.btn_fold.configure(state=tk.DISABLED)
         self.btn_raise.configure(state=tk.DISABLED)
         self.btn_limp_call.configure(state=tk.DISABLED)
 
-        # ★順序固定：いったん外してから、必ず cards_frame の直前に差し込む
+        # ★follow-up選択肢は有効化（on_answerで一旦ロックされるので、ここで復活させる）
+        for b in (self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
+            b.configure(state=tk.NORMAL)
+
         self.followup_frame.pack_forget()
         self.followup_frame.pack(before=self.cards_frame, padx=10, pady=5)
 
 
+
     def hide_followup_size_buttons(self) -> None:
-        self.btn_fold.configure(state=tk.NORMAL)
-        self.btn_raise.configure(state=tk.NORMAL)
-        self.btn_limp_call.configure(state=tk.NORMAL)
+        # ★ここで通常回答ボタンをNORMALに戻さない（次の問題開始までロック維持）
         self.followup_frame.pack_forget()
+
+        # 念のためfollow-up側は無効化しておく（表示されないが事故防止）
+        for b in (self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
+            b.configure(state=tk.DISABLED)
+
 
     # -------------------------
     # Card image
@@ -266,6 +306,149 @@ class PokerTrainerUI:
         tk_img = ImageTk.PhotoImage(img)
         label.configure(image=tk_img)
         label.image = tk_img
+    
+    def show_range_grid_popup(
+        self,
+        title: str,
+        grid_cells,
+        highlight_rc=None,
+        info_text: str = "",
+        on_next=None,
+    ) -> None:
+        # 既に開いていたら閉じる（多重ポップアップ防止）
+        self.close_range_grid_popup()
+
+        win = tk.Toplevel(self.root)
+        self._range_popup = win
+
+        def _on_close():
+            self._range_popup = None
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+        win.title(title)
+
+        # ===== スケール（70%） =====
+        SCALE = 0.7
+        cell_size = max(18, int(46 * SCALE))
+        pad = max(1, int(2 * SCALE))
+        cell_font_size = max(7, int(9 * SCALE))
+
+        grid_px = 13 * cell_size  # 表のピクセルサイズ（正方形）
+
+        # -------------------------
+        # Header（上部にNext/閉じる）
+        # -------------------------
+        header = ttk.Frame(win)
+        header.pack(fill="x", padx=10, pady=10)
+
+        topbar = ttk.Frame(header)
+        topbar.pack(fill="x")
+
+        ttk.Label(topbar, text=title, font=("", 12, "bold")).pack(side="left", anchor="w")
+
+        btns = ttk.Frame(topbar)
+        btns.pack(side="right")
+
+        if callable(on_next):
+            def _next_and_close():
+                _on_close()
+                try:
+                    on_next()
+                except Exception:
+                    pass
+            ttk.Button(btns, text="Next", command=_next_and_close).pack(side="right", padx=(6, 0))
+
+        if info_text:
+            ttk.Label(header, text=info_text, wraplength=620, justify="left").pack(anchor="w", pady=(8, 0))
+
+        # -------------------------
+        # Body（Canvas）
+        # -------------------------
+        body = ttk.Frame(win)
+        body.pack(padx=10, pady=10)
+
+        # ★ここが重要：Canvas に「表サイズ」を指定して、ウィンドウの自然サイズを表に合わせる
+        canvas = tk.Canvas(body, width=grid_px, height=grid_px, highlightthickness=0, bg="#f0f0f0")
+        canvas.pack()
+
+        for r in range(13):
+            for c in range(13):
+                cell = grid_cells[r][c]
+                x0 = c * cell_size
+                y0 = r * cell_size
+                x1 = x0 + cell_size
+                y1 = y0 + cell_size
+
+                fill = f"#{cell.bg_rgb}"
+                canvas.create_rectangle(
+                    x0 + pad, y0 + pad, x1 - pad, y1 - pad,
+                    fill=fill, outline="#c0c0c0"
+                )
+
+                label = (cell.label or "").strip()
+                if label:
+                    fg = _contrast_text_color(cell.bg_rgb)
+                    canvas.create_text(
+                        (x0 + x1) / 2, (y0 + y1) / 2,
+                        text=label, fill=fg, font=("", cell_font_size)
+                    )
+
+        if highlight_rc is not None:
+            hr, hc = highlight_rc
+            x0 = hc * cell_size
+            y0 = hr * cell_size
+            x1 = x0 + cell_size
+            y1 = y0 + cell_size
+            canvas.create_rectangle(x0 + 1, y0 + 1, x1 - 1, y1 - 1, outline="#ff0000", width=3)
+
+        # ===== ウィンドウサイズ確定（表サイズに追従） =====
+        win.update_idletasks()
+        req_w = win.winfo_reqwidth()
+        req_h = win.winfo_reqheight()
+
+        # ===== 画面外にはみ出さない位置にクランプ =====
+        try:
+            self.root.update_idletasks()
+            rx = self.root.winfo_x()
+            ry = self.root.winfo_y()
+            rw = self.root.winfo_width()
+        except Exception:
+            rx, ry, rw = 0, 0, 0
+
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+
+        x = rx + rw + 10  # まず右側狙い
+        if x + req_w > sw:
+            x = max(0, sw - req_w - 10)  # 右端に収まるように戻す
+
+        y = ry
+        if y + req_h > sh:
+            y = max(0, sh - req_h - 60)  # 下端に収まるように調整（タスクバー分60px程度）
+
+        win.geometry(f"{req_w}x{req_h}+{x}+{y}")
+
+        # （任意）サイズ固定にするなら
+        # win.resizable(False, False)   
+        try:
+            win.lift()
+            win.attributes("-topmost", True)
+            win.after(200, lambda: win.attributes("-topmost", False))  # ずっと固定せず、表示直後だけ
+        except Exception:
+            pass
+
+    def close_range_grid_popup(self) -> None:
+        win = getattr(self, "_range_popup", None)
+        if win is not None:
+            try:
+                win.destroy()
+            except Exception:
+                pass
+        self._range_popup = None
 
 
 if __name__ == "__main__":

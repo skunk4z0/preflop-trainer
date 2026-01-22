@@ -1,27 +1,29 @@
-# excel_range_repository.py
+# excel_range_repository.py（末尾でもOK。既存クラスの外に dataclass を置いて、クラスにメソッド追加）
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
-
+from typing import Any, List, Tuple
 from openpyxl.workbook.workbook import Workbook
-from openpyxl.worksheet.worksheet import Worksheet
 
-
-# =========================
-# Hand key -> grid (r0,c0)
-# =========================
-
-RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
-RANK_TO_I = {r: i for i, r in enumerate(RANKS)}
-
+RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]
 
 def _rank_index(r: str) -> int:
-    r = str(r).upper()
-    if r == "10":
-        r = "T"
-    return RANK_TO_I[r]
+    return RANKS.index(r)
+
+@dataclass(frozen=True)
+class RangeCellView:
+    label: str      # Excelセルの表示（例: "AKs"）
+    bg_rgb: str     # "RRGGBB"（"#"なし）
+
+@dataclass(frozen=True)
+class RangeGridView:
+    kind: str
+    pos: str
+    sheet_name: str
+    cells: List[List[RangeCellView]]  # 13x13
+    aa_addr: str
+    top_left: Tuple[int, int]         # (row, col)
 
 
 def _normalize_hand_to_key(hand: str) -> str:
@@ -186,6 +188,8 @@ class ExcelRangeRepository:
 
         # kind -> tag -> rgb
         self._ref_color_cache: Dict[str, Dict[str, str]] = {}
+        
+        self.debug_anchor_cache_hits = False
 
     # =========================
     # small safe getter (for debug only)
@@ -205,13 +209,15 @@ class ExcelRangeRepository:
 
         if cache_key in self._anchor_cache:
             m = self._anchor_cache[cache_key]
-            if self.enable_debug:
+            # ★cache-hitはログ出さない（必要なら下のフラグで出せる）
+            if self.enable_debug and getattr(self, "debug_anchor_cache_hits", False):
                 print(
                     f"[REPO][ANCHOR] cached pos_cell={m.pos_cell_addr} -> AA={m.aa_addr} "
                     f"(kind={kind} pos={pos})",
                     flush=True,
                 )
             return m
+
 
         if kind not in self.aa_search_ranges:
             raise KeyError(
@@ -358,7 +364,7 @@ class ExcelRangeRepository:
         if pattern is None or str(pattern).lower() in ("none", "null"):
             return ""
 
-        fg = getattr(fill, "fgColor", None)
+        fg = getattr(fill, "fgColor", None) 
         if fg is None:
             return ""
 
@@ -444,3 +450,62 @@ class ExcelRangeRepository:
         debug["tag"] = "FOLD"
         debug["unmatched_rgb"] = rgb
         return "FOLD", debug
+
+    def hand_to_grid_rc(self, card1: str, card2: str) -> Tuple[int, int]:
+        """
+        ("Ks","Jc") -> (r,c) in 0..12 のグリッド座標。
+        - ペア: 対角
+        - suited: 対角より上（row < col）
+        - offsuit: 対角より下（row > col）
+        """
+        r1, s1 = card1[0], card1[1]
+        r2, s2 = card2[0], card2[1]
+        i1 = _rank_index(r1)
+        i2 = _rank_index(r2)
+
+        if r1 == r2:
+            return (i1, i1)
+
+        suited = (s1 == s2)
+        hi = min(i1, i2)  # indexが小さいほど高ランク
+        lo = max(i1, i2)
+
+        return (hi, lo) if suited else (lo, hi)
+
+    def get_range_grid_view(self, kind: str, pos: str, size: int = 13):
+        """
+        表示専用：該当レンジ表の 13x13 を (label, bg_rgb) で返す。
+        アンカー探索は1回だけにして、ログ連発と無駄呼び出しを防ぐ。
+        """
+        anchor = self.find_anchor_by_pos(kind, pos)
+
+        # ★ここが重要：get_grid_top_left() を呼ばずに top-left を計算（find_anchorの再実行を防ぐ）
+        dr, dc = self.grid_topleft_offset
+        top_r = anchor.aa_row + dr
+        top_c = anchor.aa_col + dc
+
+        cells = []
+        for r0 in range(size):
+            row_cells = []
+            for c0 in range(size):
+                cell = self.ws.cell(row=top_r + r0, column=top_c + c0)
+
+                v = cell.value
+                label = "" if v is None else str(v).strip()
+
+                rgb = self._read_fill_rgb(cell)  # あなたの既存関数を直接使う
+                rgb = (rgb or "FFFFFF")[-6:].upper()
+
+                row_cells.append(RangeCellView(label=label, bg_rgb=rgb))
+            cells.append(row_cells)
+
+        return RangeGridView(
+            kind=kind,
+            pos=pos,
+            sheet_name=self.ws.title,
+            cells=cells,
+            aa_addr=anchor.aa_addr,
+            top_left=(top_r, top_c),
+        )
+
+

@@ -82,6 +82,98 @@ class GameController:
             pass
 
     # =========================
+    # 追加：不正解時にレンジ表を表示（B-1）
+    # =========================
+    def _try_show_range_grid_on_incorrect(self, ctx: OpenRaiseProblemContext, result: Any) -> None:
+        """
+        不正解時にだけ、参照しているレンジ表をポップアップで表示する。
+        - UIに show_range_grid_popup が無ければ何もしない
+        - Repoが見つからなければ何もしない
+        - 例外は握りつぶして本体は落とさない（安全側）
+        """
+        try:
+            # UI側の関数が無ければ終了
+            if not hasattr(self.ui, "show_range_grid_popup"):
+                return
+
+            dbg = getattr(result, "debug", None) or {}
+
+            # kind/pos は debug 優先（judge が実際に参照した kind/pos が入っている想定）
+            kind = (dbg.get("kind") or "").strip()
+            pos = (dbg.get("position") or dbg.get("pos") or "").strip()
+
+            # debug に無ければ current_problem / ctx から復元
+            if not kind:
+                if self.current_problem == ProblemType.JUEGO_OR:
+                    kind = "OR"
+                elif self.current_problem == ProblemType.JUEGO_OR_SB:
+                    kind = "OR_SB"
+                elif self.current_problem == ProblemType.JUEGO_ROL:
+                    kind = "ROL"
+
+            if not pos:
+                # OR_SB はSB固定
+                if self.current_problem == ProblemType.JUEGO_OR_SB:
+                    pos = "SB"
+                else:
+                    pos = ctx.excel_position_key or ctx.position
+
+            if not kind or not pos:
+                return
+
+            # repo の取り出し（構成差を吸収）
+            repo = None
+            if hasattr(self.ui, "repo"):
+                repo = getattr(self.ui, "repo")
+            if repo is None and hasattr(self.juego_judge, "repo"):
+                repo = getattr(self.juego_judge, "repo")
+            if repo is None and hasattr(self.juego_judge, "_repo"):
+                repo = getattr(self.juego_judge, "_repo")
+
+            if repo is None:
+                return
+
+            # Repoに表示用APIが無ければ終了
+            if not hasattr(repo, "get_range_grid_view"):
+                return
+
+            grid_view = repo.get_range_grid_view(kind, pos)
+
+            # ハイライト対象（今回のハンド）
+            highlight_rc = None
+            if hasattr(repo, "hand_to_grid_rc"):
+                c1, c2 = ctx.hole_cards
+                highlight_rc = repo.hand_to_grid_rc(c1, c2)
+
+            expected = str(dbg.get("expected_action") or dbg.get("expected") or "").strip()
+            exp_size = dbg.get("expected_raise_size_bb", None)
+
+            info = ""
+            if expected:
+                info = f"Expected: {expected}"
+                if isinstance(exp_size, (int, float)):
+                    info += f"  (size={float(exp_size)}bb)"
+                info += "\n"
+            reason = str(getattr(result, "reason", "") or "").strip()
+            if reason:
+                info += reason
+            if hasattr(self.ui, "hide_next_button"):
+                self.ui.hide_next_button()
+           
+            title = f"{grid_view.kind} / {grid_view.pos}  [sheet={grid_view.sheet_name}]"
+
+            self.ui.show_range_grid_popup(
+                title=title,
+                grid_cells=grid_view.cells,
+                highlight_rc=highlight_rc,
+                info_text=info,
+                on_next=self.new_question,# ★追加
+            )
+
+        except Exception as e:
+            self._log(f"[CTRL][WARN] show_range_grid_popup failed: {e}")
+
+    # =========================
     # 開始（難易度選択）
     # =========================
     def start_yokosawa_open(self) -> None:
@@ -104,11 +196,17 @@ class GameController:
         self.current_problem = None   # ★追加
         self.new_question()
 
-
     # =========================
     # 次の問題
     # =========================
     def new_question(self) -> None:
+        # ★追加：次の問題開始で回答ボタンを解除
+        if hasattr(self.ui, "unlock_all_answer_buttons"):
+            try:
+                self.ui.unlock_all_answer_buttons()
+            except Exception:
+                pass
+
         # 新しい問題の開始時は followup を必ず解除
         self.followup = None
 
@@ -211,7 +309,6 @@ class GameController:
                 self._apply_answer_mode("ROL_BB_OOP")    # FOLD / CALL / RAISE
             else:
                 self._apply_answer_mode("ROL_NONBB")     # FOLD / RAISE / CALL
-
 
             self.ui.deal_cards(ctx.hole_cards)
             if hasattr(self.ui, "set_hand_pos"):
@@ -483,13 +580,14 @@ class GameController:
             reason = str(getattr(result, "reason", ""))
 
             dbg = getattr(result, "debug", None)
-            if dbg is not None:
+            if dbg is not None and (not is_correct):
                 self._log("=== JUEGO DEBUG ===")
                 self._log(str(dbg))
                 self._log("===================")
 
+
             # -------------------------
-            # OR_SBで LimpC 正解なら 2段目へ
+            # OR_SBで LimpC 正解なら 2段目へ（この場合は採点完了ではないので return）
             # -------------------------
             if self.current_problem == ProblemType.JUEGO_OR_SB and is_correct:
                 dbg2 = getattr(result, "debug", {}) or {}
@@ -544,3 +642,5 @@ class GameController:
             self.ui.show_text(f"正解：{reason}")
         else:
             self.ui.show_text(f"不正解：{reason}")
+            # ★追加：不正解時だけレンジ表ポップアップ
+            self._try_show_range_grid_on_incorrect(ctx=self.context, result=result)
