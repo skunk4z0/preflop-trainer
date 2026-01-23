@@ -157,8 +157,6 @@ class GameController:
             reason = str(getattr(result, "reason", "") or "").strip()
             if reason:
                 info += reason
-            if hasattr(self.ui, "hide_next_button"):
-                self.ui.hide_next_button()
            
             title = f"{grid_view.kind} / {grid_view.pos}  [sheet={grid_view.sheet_name}]"
 
@@ -200,6 +198,9 @@ class GameController:
     # 次の問題
     # =========================
     def new_question(self) -> None:
+        # ★追加：次の問題開始で、残っているレンジ表ポップアップを閉じる（本体Nextを押しても残骸が残らない）
+        if hasattr(self.ui, "close_range_grid_popup"):
+            self.ui.close_range_grid_popup()
         # ★追加：次の問題開始で回答ボタンを解除
         if hasattr(self.ui, "unlock_all_answer_buttons"):
             try:
