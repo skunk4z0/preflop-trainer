@@ -2,11 +2,112 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+
+# =========================
+# Hand key -> grid (r0,c0)
+# =========================
+
+RANKS = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
+RANK_TO_I = {r: i for i, r in enumerate(RANKS)}
+
+
+def _rank_index(r: str) -> int:
+    r = str(r).upper()
+    if r == "10":
+        r = "T"
+    return RANK_TO_I[r]
+
+
+def _normalize_hand_to_key(hand: str) -> str:
+    """
+    hand が "AKs"/"AKo"/"AA" などの既存キーの場合はそのまま。
+    hand が "KsJc" / "AsKd" など2枚表記(4文字)の場合は "KJO" / "AKO" に正規化。
+
+    NOTE:
+    - 返り値は内部処理用に大文字化する（"S"/"O"）。
+    """
+    h = hand.strip()
+
+    # 既に "AKs" / "KQo" / "AA" 形式っぽい
+    if len(h) in (2, 3):
+        return h.upper()
+
+    # "KsJc" など（4文字想定: RankSuit + RankSuit）
+    if len(h) == 4:
+        r1, s1, r2, s2 = h[0].upper(), h[1].lower(), h[2].upper(), h[3].lower()
+
+        # pair
+        if r1 == r2:
+            return f"{r1}{r2}"
+
+        i1, i2 = _rank_index(r1), _rank_index(r2)
+        hi, lo = (r1, r2) if i1 < i2 else (r2, r1)
+        suited = (s1 == s2)
+        return f"{hi}{lo}{'S' if suited else 'O'}"
+
+    raise ValueError(f"Unrecognized hand format: {hand!r}")
+
+
+def _expected_cell_label_from_hand_key(hand_key: str) -> str:
+    """
+    新Excelのセル内表示は末尾の s/o が無い想定。
+    - "AKS"/"AKO" -> "AK"
+    - "AA" -> "AA"
+    """
+    hk = hand_key.strip().upper()
+    if len(hk) == 2:
+        return hk
+    if len(hk) == 3 and hk[2] in ("S", "O"):
+        return hk[:2]
+    raise ValueError(f"Unrecognized hand_key for label: {hand_key!r}")
+
+
+def _hand_key_to_rc(hand_key: str) -> Tuple[int, int]:
+    """
+    hand_key: "AKS" / "AKO" / "AA"
+    returns: (r0,c0) in [0..12]
+      - diagonal: pair
+      - upper triangle: suited
+      - lower triangle: offsuit
+
+    グリッド仕様:
+      上三角 = suited, 下三角 = offsuit, 対角 = pair
+    """
+    hk = hand_key.strip().upper()
+
+    # pair
+    if len(hk) == 2:
+        r = hk[0]
+        i = _rank_index(r)
+        return (i, i)
+
+    # non-pair
+    if len(hk) == 3 and hk[2] in ("S", "O"):
+        r1, r2, so = hk[0], hk[1], hk[2]
+        i1, i2 = _rank_index(r1), _rank_index(r2)
+
+        # 強い方(小さい index)を hi
+        hi_r, lo_r = (r1, r2) if i1 < i2 else (r2, r1)
+        hi_i, lo_i = _rank_index(hi_r), _rank_index(lo_r)
+
+        if so == "S":
+            # 上三角
+            return (hi_i, lo_i)
+        else:
+            # 下三角（suited 座標の転置）
+            return (lo_i, hi_i)
+
+    raise ValueError(f"Unrecognized hand_key: {hand_key!r}")
+
+
+# =========================
+# Anchor match model
+# =========================
 
 @dataclass(frozen=True)
 class AnchorMatch:
@@ -18,17 +119,21 @@ class AnchorMatch:
     aa_addr: str
 
 
+# =========================
+# Repository
+# =========================
+
 class ExcelRangeRepository:
     """
     Excelレンジ表を参照する Repository（posセル起点）。
 
-    仕様（あなたの説明どおり）:
+    仕様（以前の設計を優先）:
     1) AA_SEARCH_RANGES[kind] 内で pos名(EP/MP/CO/BTN...) を検索
     2) posセルから (down=+3, left=-2) のセルが "AA"
     3) AAセルから GRID_TOPLEFT_OFFSET で 13x13 グリッド左上を求める
-    4) 13x13 内で hand_key（例: A5o / 44）文字列検索
-       - 見つからない → "FOLD"
-       - 見つかる → そのセル色を読み、見本色と照合しタグを返す
+    4) hand_key -> (r0,c0) に変換して、13x13 内の該当セルを直接参照
+       - そのセル色を読み、見本色と照合しタグを返す
+       - 無色/不一致は "FOLD"
 
     見本色:
     - kind ごとに config で固定セル番地を持つ（ref_color_cells[kind][tag] = "H25" など）
@@ -38,9 +143,9 @@ class ExcelRangeRepository:
         self,
         wb: Workbook,
         sheet_name: str,
-        aa_search_ranges: Dict[str, str],                    # kind -> A1 range
-        grid_topleft_offset: Tuple[int, int],                # AA -> grid top-left (dr, dc)
-        ref_color_cells: Dict[str, Dict[str, str]],          # kind -> tag -> "H25"
+        aa_search_ranges: Dict[str, str],             # kind -> A1 range
+        grid_topleft_offset: Tuple[int, int],         # AA -> grid top-left (dr, dc)
+        ref_color_cells: Dict[str, Dict[str, str]],   # kind -> tag -> "H25"
         enable_debug: bool = False,
     ) -> None:
         if sheet_name not in wb.sheetnames:
@@ -50,12 +155,24 @@ class ExcelRangeRepository:
         self.ws: Worksheet = wb[sheet_name]
 
         self.aa_search_ranges = dict(aa_search_ranges)
-        self.grid_topleft_offset = grid_topleft_offset
+        self.grid_topleft_offset = tuple(grid_topleft_offset)
         self.ref_color_cells = dict(ref_color_cells)
         self.enable_debug = enable_debug
 
         # (kind, pos) -> AnchorMatch
         self._anchor_cache: Dict[Tuple[str, str], AnchorMatch] = {}
+
+        # kind -> tag -> rgb
+        self._ref_color_cache: Dict[str, Dict[str, str]] = {}
+
+    # =========================
+    # small safe getter (for debug only)
+    # =========================
+    def _safe_getattr(self, obj, name: str):
+        try:
+            return getattr(obj, name)
+        except Exception as e:
+            return f"<err:{e}>"
 
     # =========================
     # Anchor (pos -> AA)
@@ -66,23 +183,13 @@ class ExcelRangeRepository:
 
         if cache_key in self._anchor_cache:
             m = self._anchor_cache[cache_key]
-
-            # debug 属性が無くても落ちない
-            if getattr(self, "debug", False):
-                self._log(
-                    f"[REPO][ANCHOR] cached "
-                    f"pos_cell={m.pos_cell} -> AA={m.aa_cell} "
-                    f"(kind={kind} pos={pos})"
+            if self.enable_debug:
+                print(
+                    f"[REPO][ANCHOR] cached pos_cell={m.pos_cell_addr} -> AA={m.aa_addr} "
+                    f"(kind={kind} pos={pos})",
+                    flush=True,
                 )
-
             return m
-
-    # 以下、既存の探索ロジック…
-
-
-    # --- ② キャッシュミス（ここから探索） ---
-    # ↓↓↓ 既存のアンカー探索ロジック（そのまま）
-
 
         if kind not in self.aa_search_ranges:
             raise KeyError(
@@ -134,7 +241,8 @@ class ExcelRangeRepository:
 
         if self.enable_debug:
             print(
-                f"[REPO][ANCHOR] chosen pos_cell={chosen.pos_cell_addr} -> AA={chosen.aa_addr} (kind={kind} pos={pos})",
+                f"[REPO][ANCHOR] chosen pos_cell={chosen.pos_cell_addr} -> AA={chosen.aa_addr} "
+                f"(kind={kind} pos={pos})",
                 flush=True,
             )
 
@@ -167,8 +275,11 @@ class ExcelRangeRepository:
 
     def get_ref_colors(self, kind: str) -> Dict[str, str]:
         """
-        kind ごとに定義された「固定セル番地」から見本色を読む。
+        kind ごとに定義された「固定セル番地」から見本色を読む（キャッシュあり）。
         """
+        if kind in self._ref_color_cache:
+            return self._ref_color_cache[kind]
+
         if kind not in self.ref_color_cells:
             raise KeyError(
                 f"REF_COLOR_CELLS not defined for kind={kind}. "
@@ -183,15 +294,22 @@ class ExcelRangeRepository:
 
             if self.enable_debug:
                 fg = getattr(cell.fill, "fgColor", None)
+                fg_type = self._safe_getattr(fg, "type") if fg is not None else None
+
+                # type に応じて「有効なものだけ」読む（＋安全化）
+                fg_rgb = self._safe_getattr(fg, "rgb") if fg is not None and (fg_type in (None, "rgb")) else None
+                fg_theme = self._safe_getattr(fg, "theme") if fg is not None and fg_type == "theme" else None
+                fg_indexed = self._safe_getattr(fg, "indexed") if fg is not None and fg_type == "indexed" else None
+
                 print(
                     f"[REPO][REF-FIXED] kind={kind} tag={tag} cell={cell.coordinate} "
-                    f"patternType={getattr(cell.fill,'patternType',None)} "
-                    f"fg.type={getattr(fg,'type',None)} fg.rgb={getattr(fg,'rgb',None)} "
-                    f"fg.theme={getattr(fg,'theme',None)} fg.indexed={getattr(fg,'indexed',None)} "
+                    f"patternType={getattr(cell.fill, 'patternType', None)} "
+                    f"fg.type={fg_type} fg.rgb={fg_rgb} fg.theme={fg_theme} fg.indexed={fg_indexed} "
                     f"read_rgb={rgb}",
                     flush=True,
                 )
 
+        self._ref_color_cache[kind] = result
         return result
 
     # =========================
@@ -239,114 +357,65 @@ class ExcelRangeRepository:
         return rgb
 
     # =========================
-    # Tag decision (single implementation)
+    # Main API: tag lookup
     # =========================
 
-    def get_tag_for_hand(self, kind: str, pos: str, hand_key: str) -> Tuple[str, Dict[str, Any]]:
+    def get_tag_for_hand(self, kind: str, position: str, hand: str) -> Tuple[str, Dict[str, Any]]:
         """
-        hand_key を 13x13 グリッド内で文字列検索してタグを返す。
-        戻り値: (tag, repo_debug)
+        hand_key -> (r0,c0) -> グリッド直接参照 -> fill色でタグ判定。
+        追加仕様：
+        - 「セル値（ハンド名）と色」が両方揃ったときだけ有効
+          文字列のみ / 色のみ は “色なし” と同じ扱い（= FOLD）
         """
-        top_r, top_c = self.get_grid_top_left(kind, pos)
+        debug: Dict[str, Any] = {"kind": kind, "position": position, "hand_in": hand}
+        hand_key = _normalize_hand_to_key(hand)
+        r0, c0 = _hand_key_to_rc(hand_key)
+        expected_label = _expected_cell_label_from_hand_key(hand_key)
+        debug.update({"hand_key": hand_key, "r0": r0, "c0": c0, "expected_label": expected_label})
 
-                # 13x13 内で hand_key を検索（空白除去 + "66+" などにも対応）
-        found_cell = None
-        found_rc = None
+        # 1) グリッド左上
+        top_r, top_c = self.get_grid_top_left(kind, position)
+        debug["grid_topleft"] = (top_r, top_c)
 
-        for r0 in range(13):
-            for c0 in range(13):
-                cell = self.ws.cell(row=top_r + r0, column=top_c + c0)
-                v = cell.value
+        target_row = top_r + r0
+        target_col = top_c + c0
+        cell = self.ws.cell(row=target_row, column=target_col)
 
-                # 文字列なら空白除去して比較、None なら空文字
-                v_norm = (v.strip() if isinstance(v, str) else ("" if v is None else str(v)))
+        debug["target_cell_rc"] = (target_row, target_col)
+        debug["target_cell_a1"] = cell.coordinate
+        debug["cell_value"] = cell.value
 
-                # 完全一致（いままで通り）
-                if v_norm == hand_key:
-                    found_cell = cell
-                    found_rc = (r0, c0)
-                    break
+        # ★セル値チェック（色だけの凡例セルなどを除外）
+        cell_text = "" if cell.value is None else str(cell.value).strip().upper()
+        debug["cell_text_norm"] = cell_text
 
-                # 追加： "66+" や "KJo+" のような表記も拾う
-                if isinstance(v, str) and v_norm.startswith(hand_key):
-                    found_cell = cell
-                    found_rc = (r0, c0)
-                    break
+        if cell_text != expected_label:
+            # 文字列のみ・色のみは「色なし」と同じ扱いにする
+            debug["cell_rgb"] = ""  # 強制的に無色扱い
+            ref = self.get_ref_colors(kind)
+            debug["ref_colors"] = ref
+            debug["tag"] = "FOLD"
+            debug["rejected_reason"] = "cell_label_mismatch_or_blank"
+            return "FOLD", debug
 
-            if found_cell is not None:
-                break
-  
+        # 2) 対象セルの色（ここまで来たら “文字＋色” の色を見る）
+        rgb = self._read_fill_rgb(cell)
+        debug["cell_rgb"] = rgb
 
-        if found_cell is None:
-            if self.enable_debug:
-                anchor = self.find_anchor_by_pos(kind, pos)
-                print(
-                    f"[REPO][FIND] hand={hand_key} NOT found "
-                    f"(kind={kind} pos={pos} AA={anchor.aa_addr} grid_top_left=({top_r},{top_c}))",
-                    flush=True,
-                )
-                # 先頭数セルをダンプ（ズレ確認用）
-                for rr in range(3):
-                    row_vals = []
-                    for cc in range(6):
-                        vv = self.ws.cell(row=top_r + rr, column=top_c + cc).value
-                        row_vals.append("" if vv is None else str(vv))
-                    print(f"[REPO][GRID] r{rr}: {row_vals}", flush=True)
+        # 3) 見本色と照合
+        ref = self.get_ref_colors(kind)  # tag -> rgb
+        debug["ref_colors"] = ref
 
-            return "FOLD", {
-                "kind": kind,
-                "pos": pos,
-                "hand": hand_key,
-                "found": False,
-                "reason": "hand_not_found_in_grid",
-            }
+        if not rgb:
+            debug["tag"] = "FOLD"
+            debug["rejected_reason"] = "no_fill_color"
+            return "FOLD", debug
 
-        if self.enable_debug:
-            print(
-                f"[REPO][FIND] hand={hand_key} found at {found_cell.coordinate} "
-                f"(r0={found_rc[0]} c0={found_rc[1]} kind={kind} pos={pos})",
-                flush=True,
-            )
+        for tag, ref_rgb in ref.items():
+            if rgb == ref_rgb and ref_rgb:
+                debug["tag"] = tag
+                return tag, debug
 
-        # 対象セル色
-        cell_rgb = self._read_fill_rgb(found_cell)
-        if self.enable_debug:
-            fg = getattr(found_cell.fill, "fgColor", None)
-            print(
-                f"[REPO][TARGET] cell={found_cell.coordinate} value={found_cell.value!r} rc={found_rc} "
-                f"patternType={getattr(found_cell.fill,'patternType',None)} "
-                f"fg.type={getattr(fg,'type',None)} fg.rgb={getattr(fg,'rgb',None)} "
-                f"read_rgb={cell_rgb}",
-                flush=True,
-            )
-
-        # 見本色
-        ref = self.get_ref_colors(kind)
-
-        tag = "FOLD"
-        if cell_rgb:
-            cell_u = cell_rgb.upper()
-            for t, ref_rgb in ref.items():
-                if ref_rgb and cell_u == ref_rgb.upper():
-                    tag = t
-                    break
-
-        dbg: Dict[str, Any] = {
-            "kind": kind,
-            "pos": pos,
-            "hand": hand_key,
-            "found": True,
-            "cell": found_cell.coordinate,
-            "grid_rc": found_rc,
-            "cell_rgb": cell_rgb,
-            "ref_colors": ref,
-        }
-
-        if tag == "FOLD" and cell_rgb:
-            dbg["reason"] = "no_ref_match"
-        elif tag == "FOLD":
-            dbg["reason"] = "no_effective_fill"
-        else:
-            dbg["match"] = {"tag": tag, "ref_rgb": ref.get(tag, "")}
-
-        return tag, dbg
+        debug["tag"] = "FOLD"
+        debug["unmatched_rgb"] = rgb
+        return "FOLD", debug
