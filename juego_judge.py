@@ -16,8 +16,12 @@ class JudgeResult:
 
 
 class JUEGOJudge:
+    
     def __init__(self, repo) -> None:
         self.repo = repo
+
+
+
 
     # -------------------------
     # small helpers
@@ -144,7 +148,42 @@ class JUEGOJudge:
             reason=reason,
             debug=debug,
         )
+    # -------------------------
+    # 3BET（まずは 1段：FOLD / CALL / 3BET のみ）
+    # -------------------------
+    def judge_3bet(self, position: str, hand: str, user_action: str, loose: bool) -> JudgeResult:
+        kind = "3BET"
+        tag, repo_dbg = self._repo_get_tag(kind, position, hand)
 
+        tag_norm = (tag or "").strip()
+        t = tag_norm.upper()
+        ua = (user_action or "").strip().upper()
+
+        # まずはCALLでOK（閾値は無視して全部CALL扱い）
+        if t.startswith("CCVS") or "CCVS" in t:
+            correct_action = "CALL"
+        # 3bet系（4bet来たら〜の枝は今回は無視して「3BETする」だけ）
+        elif t.startswith("3BET") or t.startswith("C4BET"):
+            correct_action = "RAISE"   # UI上は「RAISE」ボタン＝「3BET」扱いでOK
+        else:
+            correct_action = "FOLD"
+
+        is_correct = (ua == correct_action)
+        reason = f"Tag={tag_norm} -> {correct_action}"
+
+        debug = {
+            "kind": kind,
+            "position": position,
+            "hand": hand,
+            "detail_tag": tag_norm,
+            "tag_upper": t,
+            "loose": loose,
+            "user_action": ua,
+            "correct_action": correct_action,
+            "repo": repo_dbg,
+        }
+
+        return JudgeResult(action=correct_action, correct=is_correct, reason=reason, debug=debug)
 
     # -------------------------
     # BB_ISO（別モード用：コール/リンプ後のBB判断）

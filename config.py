@@ -38,6 +38,7 @@ AA_SEARCH_RANGES = {
     "OR":    "F11:BL26",     # EP〜BTN
     "ROL":   "U28:DE43",
     "OR_SB": "CC11:CP26",    # SB 用（特殊）
+    "3BET":  "C54:BK98",
 }
 
 
@@ -83,4 +84,17 @@ REF_COLOR_CELLS = {
         "ROLvsFISH": "J42",
         "OLvsFISH":  "J43",
     },
+
+    "3BET": {
+        "3bet/5Bet": "F49",
+        "3bet/Fold4bet": "F50",
+        "3bet/C4bet": "F51",
+        "C4bet_Situacional": "F52",
+        "CCvs3.5x": "L49",
+        "CCvs3x": "L50",
+        "CCvs2.5x": "L51",
+        "CCvs2.25x": "Q49",
+        "CCvs2x": "Q50",
+        },
+
 }

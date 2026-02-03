@@ -1,22 +1,14 @@
 # ui.py
 from __future__ import annotations
 
-import re
 import os
+import re
 import logging
-import traceback
 import tkinter as tk
 from tkinter import ttk, messagebox
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
-from openpyxl import load_workbook
-import config
+from typing import Any, Optional
 
-from openpyxl.workbook.workbook import Workbook
-from openpyxl.worksheet.worksheet import Worksheet
-from excel_range_repository import ExcelRangeRepository
-from juego_judge import JUEGOJudge
-from controller import GameController
+import config
 
 logger = logging.getLogger("poker_trainer.ui")
 
@@ -24,7 +16,7 @@ logger = logging.getLogger("poker_trainer.ui")
 def _contrast_text_color(rgb: str) -> str:
     try:
         r = int(rgb[0:2], 16); g = int(rgb[2:4], 16); b = int(rgb[4:6], 16)
-        y = (r*299 + g*587 + b*114) / 1000
+        y = (r * 299 + g * 587 + b * 114) / 1000
         return "black" if y >= 150 else "white"
     except (ValueError, TypeError):
         return "black"
@@ -37,40 +29,23 @@ class PokerTrainerUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Poker Trainer")
+
+        # 依存注入されるもの（main.pyでセット）
+        self.controller: Optional[Any] = None
+        self.repo: Optional[Any] = None
+
+        # popup参照
         self._range_popup = None
-
-        # -------------------------
-        # Excel / Repository 初期化
-        # -------------------------
-        try:
-            wb = load_workbook(config.EXCEL_PATH, data_only=True)
-        except Exception as e:
-            messagebox.showerror("Excel Error", f"Excelを開けません:\n{config.EXCEL_PATH}\n\n{e}")
-            raise
-
-        try:
-            repo = ExcelRangeRepository(
-                wb=wb,
-                sheet_name=config.SHEET_NAME,
-                aa_search_ranges=config.AA_SEARCH_RANGES,
-                grid_topleft_offset=config.GRID_TOPLEFT_OFFSET,
-                ref_color_cells=config.REF_COLOR_CELLS,
-                enable_debug=False,
-            )
-        except Exception as e:
-            messagebox.showerror("Repository Error", f"Repository初期化に失敗:\n{e}")
-            raise
-        self.repo = repo
-        juego_judge = JUEGOJudge(repo)
-        yokosawa_judge = None
-
-        self.controller = GameController(self, juego_judge, yokosawa_judge, enable_debug=True)
 
         # -------------------------
         # UI
         # -------------------------
         top = tk.Frame(root)
         top.pack(padx=10, pady=10)
+
+        # ★追加：スタートへ戻る
+        self.btn_home = tk.Button(top, text="Startへ戻る", command=self.go_to_start)
+        self.btn_home.pack(side=tk.LEFT, padx=5)
 
         self.btn_juego_b = tk.Button(top, text="JUEGO 初級(OR)", command=self.start_juego_beginner)
         self.btn_juego_i = tk.Button(top, text="JUEGO 中級(OR_SB)", command=self.start_juego_intermediate)
@@ -106,13 +81,13 @@ class PokerTrainerUI:
         self.btn_bb25.pack(side=tk.LEFT, padx=5)
         self.btn_bb3.pack(side=tk.LEFT, padx=5)
 
-        # Cards（ここを before=... の基準にするので、self に保持）
+        # Cards（follow-up frame pack before の基準にするので保持）
         self.cards_frame = tk.Frame(root)
         self.cards_frame.pack(padx=10, pady=10)
 
         self.card_labels = [
-            tk.Label(self.cards_frame, text="card1"),
-            tk.Label(self.cards_frame, text="card2"),
+            tk.Label(self.cards_frame, text=""),
+            tk.Label(self.cards_frame, text=""),
         ]
         self.card_labels[0].grid(row=0, column=0, padx=8)
         self.card_labels[1].grid(row=0, column=1, padx=8)
@@ -131,25 +106,109 @@ class PokerTrainerUI:
         self.txt = tk.Text(root, height=10, width=80)
         self.txt.pack(padx=10, pady=10)
 
+        # 初期表示はスタート画面（controller未接続でも動くUI状態にする）
+        self._apply_start_screen_ui()
+
+    # -------------------------
+    # 依存性注入（main.pyから呼ぶ）
+    # -------------------------
+    def attach_controller(self, controller: Any) -> None:
+        self.controller = controller
+
+    def attach_repo(self, repo: Any) -> None:
+        self.repo = repo
+
+    # -------------------------
+    # Start画面（戻る）関連
+    # -------------------------
+    def _unlock_difficulty_buttons(self) -> None:
+        self.btn_juego_b.configure(state=tk.NORMAL)
+        self.btn_juego_i.configure(state=tk.NORMAL)
+        self.btn_juego_a.configure(state=tk.NORMAL)
+
+    def _lock_difficulty_buttons(self) -> None:
+        self.btn_juego_b.configure(state=tk.DISABLED)
+        self.btn_juego_i.configure(state=tk.DISABLED)
+        self.btn_juego_a.configure(state=tk.DISABLED)
+
+    def _apply_start_screen_ui(self) -> None:
+        # UIだけを「開始前」状態に戻す
+        self.close_range_grid_popup()
+        self.hide_next_button()
+        self.hide_followup_size_buttons()
+        self._unlock_difficulty_buttons()
+
+        # カード/入力欄/説明をクリア
+        for lbl in self.card_labels:
+            lbl.configure(image="", text="")
+            lbl.image = None
+
+        self.var_hand.set("")
+        self.var_pos.set("")
+        self.show_text("難易度を選択してください（初級/中級/上級）")
+
+        # 回答は開始まで禁止
+        self.lock_all_answer_buttons()
+
+    def go_to_start(self) -> None:
+        # Controller状態をリセット（あれば）
+        if self.controller is not None and hasattr(self.controller, "reset_state"):
+            self.controller.reset_state()
+        self._apply_start_screen_ui()
+
     # -------------------------
     # UI -> Controller
+    # -------------------------
+    def start_juego_beginner(self) -> None:
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        self._lock_difficulty_buttons()
+        self.controller.start_juego_beginner()
+
+    def start_juego_intermediate(self) -> None:
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        self._lock_difficulty_buttons()
+        self.controller.start_juego_intermediate()
+
+    def start_juego_advanced(self) -> None:
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        self._lock_difficulty_buttons()
+        self.controller.start_juego_advanced()
+
+    def on_answer(self, action: str) -> None:
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        self.lock_all_answer_buttons()  # 押した瞬間にロック
+        self.controller.submit(user_action=action)
+
+    def on_next(self) -> None:
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        self.controller.new_question()
+
+    # -------------------------
+    # Answer mode（Controller -> UI）
     # -------------------------
     def set_answer_mode(self, mode: str) -> None:
         """
         mode:
           - "OR" / "OR_SB"      : FOLD / RAISE / LIMP_CALL
           - "ROL_NONBB"         : FOLD / RAISE / CALL
-          - "ROL_BB_OOP"        : FOLD / CHECK / RAISE
+          - "ROL_BB_OOP"        : FOLD / CALL / RAISE
           - "ROL_BBVS_SB"       : CHECK / RAISE
         """
         m = (mode or "").strip().upper()
 
         # まず必ず全ボタンを外す（前状態の影響を断つ）
         for b in (self.btn_fold, self.btn_raise, self.btn_limp_call):
-            try:
-                b.pack_forget()
-            except Exception:
-                pass
+            self._tk_call("pack_forget answer button", b.pack_forget)
 
         if m in ("OR", "OR_SB"):
             self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
@@ -170,7 +229,6 @@ class PokerTrainerUI:
             self.btn_limp_call.pack(side=tk.LEFT, padx=5)
 
         elif m == "ROL_BB_OOP":
-            # BB_OOP は FOLD / CALL / RAISE（CHECKは出さない）
             self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
             self.btn_limp_call.config(text="CALL", command=lambda: self.on_answer("CALL"))
             self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
@@ -180,7 +238,6 @@ class PokerTrainerUI:
             self.btn_raise.pack(side=tk.LEFT, padx=5)
 
         elif m == "ROL_BBVS_SB":
-            # CHECK / RAISE の2択
             self.btn_fold.config(text="CHECK", command=lambda: self.on_answer("CHECK"))
             self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
 
@@ -197,36 +254,13 @@ class PokerTrainerUI:
             self.btn_raise.pack(side=tk.LEFT, padx=5)
             self.btn_limp_call.pack(side=tk.LEFT, padx=5)
 
-    def _lock_difficulty_buttons(self) -> None:
-        self.btn_juego_b.configure(state=tk.DISABLED)
-        self.btn_juego_i.configure(state=tk.DISABLED)
-        self.btn_juego_a.configure(state=tk.DISABLED)
-
-    def start_juego_beginner(self) -> None:
-        self._lock_difficulty_buttons()
-        self.controller.start_juego_beginner()
-
-    def start_juego_intermediate(self) -> None:
-        self._lock_difficulty_buttons()
-        self.controller.start_juego_intermediate()
-
-    def start_juego_advanced(self) -> None:
-        self._lock_difficulty_buttons()
-        self.controller.start_juego_advanced()
-
-    def on_answer(self, action: str) -> None:
-        self.lock_all_answer_buttons()         # ★追加：押した瞬間にロック
-        self.controller.submit(user_action=action)
-
-    def on_next(self) -> None:
-        self.controller.new_question()
-
+    # -------------------------
+    # Tk call safe wrapper（例外安全化）
+    # -------------------------
     def _tk_call(self, where: str, fn, *args, **kwargs):
-        """Tk操作の例外を安全に扱う（握りつぶさず、ログに残す）"""
         try:
             return fn(*args, **kwargs)
         except tk.TclError as e:
-            # ウィンドウ破棄済み等の“起こりうる例外”はDEBUGに落とす
             logger.debug("[UI] %s (ignored TclError): %s", where, e)
             return None
         except Exception as e:
@@ -237,13 +271,11 @@ class PokerTrainerUI:
     # Controller -> UI
     # -------------------------
     def lock_all_answer_buttons(self) -> None:
-        """回答を1回に制限するため、回答系ボタンをすべて無効化"""
         for b in (self.btn_fold, self.btn_raise, self.btn_limp_call,
                   self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
             self._tk_call("disable answer button", b.configure, state=tk.DISABLED)
 
     def unlock_all_answer_buttons(self) -> None:
-        """次の問題開始時に回答ボタンを再び有効化"""
         for b in (self.btn_fold, self.btn_raise, self.btn_limp_call,
                   self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
             self._tk_call("enable answer button", b.configure, state=tk.NORMAL)
@@ -271,26 +303,61 @@ class PokerTrainerUI:
     # -------------------------
     # Follow-up buttons
     # -------------------------
-    def show_followup_size_buttons(self) -> None:
+    def show_followup_size_buttons(self, choices=None, prompt: str | None = None) -> None:
+        """
+        follow-up の選択肢（例: [2, 2.25, 2.5, 3]）を受け取り、ボタンを動的に生成して表示する。
+        controller.submit(str(value)) を呼ぶ前提（self.controller が attach 済みであること）。
+        """
+        # 既定（互換）
+        if choices is None:
+            choices = [2, 2.25, 2.5, 3]
+
         # 通常回答は無効のまま
         self.btn_fold.configure(state=tk.DISABLED)
         self.btn_raise.configure(state=tk.DISABLED)
         self.btn_limp_call.configure(state=tk.DISABLED)
 
-        # ★follow-up選択肢は有効化（on_answerで一旦ロックされるので、ここで復活させる）
-        for b in (self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
-            b.configure(state=tk.NORMAL)
+        # followup_frame 内を一旦クリア（既存ボタン残骸防止）
+        for w in self.followup_frame.winfo_children():
+            w.destroy()
 
+        # 任意：プロンプト表示
+        if prompt:
+            lbl = tk.Label(self.followup_frame, text=prompt, anchor="w", justify="left")
+            lbl.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(0, 4))
+
+        # ボタン生成（横並び）
+        row = tk.Frame(self.followup_frame)
+        row.pack(side=tk.TOP, fill=tk.X)
+
+        # controller への接続チェック（落とさない）
+        ctrl = getattr(self, "controller", None)
+
+        for v in choices:
+            # 表示は 2 / 2.25 / 2.5 / 3 のように綺麗に
+            label = str(int(v)) if float(v).is_integer() else str(v)
+
+            btn = tk.Button(
+                row,
+                text=label,
+                command=(lambda val=v: ctrl.submit(str(val))) if ctrl else None,
+            )
+            btn.configure(state=tk.NORMAL if ctrl else tk.DISABLED)
+            btn.pack(side=tk.LEFT, padx=4, pady=2)
+
+        # 表示位置：cards_frame の手前
         self.followup_frame.pack_forget()
         self.followup_frame.pack(before=self.cards_frame, padx=10, pady=5)
 
-    def hide_followup_size_buttons(self) -> None:
-        # ★ここで通常回答ボタンをNORMALに戻さない（次の問題開始までロック維持）
-        self.followup_frame.pack_forget()
 
-        # 念のためfollow-up側は無効化しておく（表示されないが事故防止）
-        for b in (self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
-            b.configure(state=tk.DISABLED)
+    def hide_followup_size_buttons(self) -> None:
+        # followup_frame 内をクリアして隠す
+        try:
+            for w in self.followup_frame.winfo_children():
+                w.destroy()
+            self.followup_frame.pack_forget()
+        except Exception:
+            pass
 
     # -------------------------
     # Card image
@@ -314,6 +381,9 @@ class PokerTrainerUI:
         label.configure(image=tk_img)
         label.image = tk_img
 
+    # -------------------------
+    # Range popup
+    # -------------------------
     def show_range_grid_popup(
         self,
         title: str,
@@ -343,9 +413,7 @@ class PokerTrainerUI:
 
         grid_px = 13 * cell_size  # 表のピクセルサイズ（正方形）
 
-        # -------------------------
-        # Header（上部にNext/閉じる）
-        # -------------------------
+        # Header
         header = ttk.Frame(win)
         header.pack(fill="x", padx=10, pady=10)
 
@@ -368,18 +436,16 @@ class PokerTrainerUI:
                         messagebox.showerror("Error", f"Next処理でエラーが発生しました:\n{e}")
                     except tk.TclError:
                         pass
+
             ttk.Button(btns, text="Next", command=_next_and_close).pack(side="right", padx=(6, 0))
 
         if info_text:
             ttk.Label(header, text=info_text, wraplength=620, justify="left").pack(anchor="w", pady=(8, 0))
 
-        # -------------------------
         # Body（Canvas）
-        # -------------------------
         body = ttk.Frame(win)
         body.pack(padx=10, pady=10)
 
-        # ★ここが重要：Canvas に「表サイズ」を指定して、ウィンドウの自然サイズを表に合わせる
         canvas = tk.Canvas(body, width=grid_px, height=grid_px, highlightthickness=0, bg="#f0f0f0")
         canvas.pack()
 
@@ -413,12 +479,12 @@ class PokerTrainerUI:
             y1 = y0 + cell_size
             canvas.create_rectangle(x0 + 1, y0 + 1, x1 - 1, y1 - 1, outline="#ff0000", width=3)
 
-        # ===== ウィンドウサイズ確定（表サイズに追従） =====
+        # ウィンドウサイズ確定（表サイズに追従）
         win.update_idletasks()
         req_w = win.winfo_reqwidth()
         req_h = win.winfo_reqheight()
 
-        # ===== 画面外にはみ出さない位置にクランプ =====
+        # 画面外にはみ出さない位置にクランプ
         try:
             self.root.update_idletasks()
             rx = self.root.winfo_x()
@@ -433,23 +499,20 @@ class PokerTrainerUI:
 
         x = rx + rw + 10  # まず右側狙い
         if x + req_w > sw:
-            x = max(0, sw - req_w - 10)  # 右端に収まるように戻す
+            x = max(0, sw - req_w - 10)
 
         y = ry
         if y + req_h > sh:
-            y = max(0, sh - req_h - 60)  # 下端に収まるように調整（タスクバー分60px程度）
+            y = max(0, sh - req_h - 60)
 
         win.geometry(f"{req_w}x{req_h}+{x}+{y}")
 
-        # （任意）サイズ固定にするなら
-        # win.resizable(False, False)
         try:
             win.lift()
             win.attributes("-topmost", True)
-            win.after(200, lambda: win.attributes("-topmost", False))  # ずっと固定せず、表示直後だけ
+            win.after(200, lambda: win.attributes("-topmost", False))
         except tk.TclError as e:
             logger.debug("[UI] lift/topmost failed: %s", e)
-            pass
 
     def close_range_grid_popup(self) -> None:
         win = getattr(self, "_range_popup", None)

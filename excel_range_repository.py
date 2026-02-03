@@ -279,6 +279,59 @@ class ExcelRangeRepository:
 
         return chosen
 
+    def list_positions(self, kind: str) -> list[str]:
+        """
+        AA_SEARCH_RANGES[kind] 内を走査して、
+        「posセル + (down=+3,left=-2) が AA」になっている pos を列挙する。
+
+        目的：generator側で pos をハードコードせず、Excelに存在するposだけ使う。
+        """
+        if kind not in self.aa_search_ranges:
+            raise KeyError(
+                f"AA search range not defined for kind={kind}. "
+                f"Defined kinds={list(self.aa_search_ranges.keys())}"
+            )
+
+        a1_range = self.aa_search_ranges[kind]
+        found: list[tuple[int, int, str]] = []
+
+        for row in self.ws[a1_range]:
+            for cell in row:
+                val = cell.value
+                if val is None:
+                    continue
+
+                pos_text = str(val).strip()
+                if not pos_text:
+                    continue
+
+                pr, pc = cell.row, cell.column
+                aa_r, aa_c = pr + 3, pc - 2
+                if aa_c <= 0:
+                    continue
+
+                aa_cell = self.ws.cell(row=aa_r, column=aa_c)
+                aa_val = "" if aa_cell.value is None else str(aa_cell.value).strip().upper()
+                if aa_val != "AA":
+                    continue
+
+                found.append((pr, pc, pos_text))
+
+        found.sort(key=lambda x: (x[0], x[1]))
+
+        # 重複除去（同じ表示のposが複数箇所にあるケースに備える）
+        uniq: list[str] = []
+        seen: set[str] = set()
+        for _, _, pos_text in found:
+            key = _norm_pos_text(pos_text)  # 既存の正規化を利用
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            uniq.append(pos_text)
+
+        return uniq
+    
+
     # =========================
     # Grid addressing
     # =========================
