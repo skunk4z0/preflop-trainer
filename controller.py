@@ -170,6 +170,9 @@ class GameController:
             logger.error("[CTRL] engine.new_question failed: %s", e, exc_info=True)
             return
 
+        # ★ここに追加：表示ラベルは “生成結果” に従う（最も安全）
+        mode = getattr(generated, "answer_mode", "")     
+
         self._ui_call("set_answer_mode", getattr(generated, "answer_mode", ""))
 
         ctx = generated.ctx

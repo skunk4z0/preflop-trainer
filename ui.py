@@ -108,7 +108,7 @@ class PokerTrainerUI:
 
         # 初期表示はスタート画面（controller未接続でも動くUI状態にする）
         self._apply_start_screen_ui()
-
+        
     # -------------------------
     # 依存性注入（main.pyから呼ぶ）
     # -------------------------
@@ -197,13 +197,7 @@ class PokerTrainerUI:
     # Answer mode（Controller -> UI）
     # -------------------------
     def set_answer_mode(self, mode: str) -> None:
-        """
-        mode:
-          - "OR" / "OR_SB"      : FOLD / RAISE / LIMP_CALL
-          - "ROL_NONBB"         : FOLD / RAISE / CALL
-          - "ROL_BB_OOP"        : FOLD / CALL / RAISE
-          - "ROL_BBVS_SB"       : CHECK / RAISE
-        """
+        
         m = (mode or "").strip().upper()
 
         # まず必ず全ボタンを外す（前状態の影響を断つ）
@@ -214,6 +208,16 @@ class PokerTrainerUI:
             self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
             self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
             self.btn_limp_call.config(text="LIMP_CALL", command=lambda: self.on_answer("LIMP_CALL"))
+
+            self.btn_fold.pack(side=tk.LEFT, padx=5)
+            self.btn_raise.pack(side=tk.LEFT, padx=5)
+            self.btn_limp_call.pack(side=tk.LEFT, padx=5)
+
+        elif m == "3BET":
+            # ★追加：3BET用
+            self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
+            self.btn_raise.config(text="3BET", command=lambda: self.on_answer("RAISE"))  # 表示だけ3BET
+            self.btn_limp_call.config(text="CALL", command=lambda: self.on_answer("CALL"))
 
             self.btn_fold.pack(side=tk.LEFT, padx=5)
             self.btn_raise.pack(side=tk.LEFT, padx=5)
