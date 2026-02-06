@@ -10,7 +10,12 @@ data/
 cards/
 yokosawarange/
 
+# Tool outputs
+tools/out/
+*.log
+
+
 # virtual env
-.venv/
+.venv-*/
 venv/
 env/
