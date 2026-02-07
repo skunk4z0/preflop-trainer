@@ -15,6 +15,7 @@ from config import (
 )
 from excel_range_repository import ExcelRangeRepository
 
+
 def all_hand_keys_169() -> list[str]:
     ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
     out: list[str] = []

@@ -1,6 +1,9 @@
 # excel_range_repository.py（末尾でもOK。既存クラスの外に dataclass を置いて、クラスにメソッド追加）
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
+
 import re
 from dataclasses import dataclass
 from typing import Any, List, Tuple
@@ -127,6 +130,29 @@ def _norm_pos_text(x: Any) -> str:
     if x is None:
         return ""
     return _POS_NORM_RE.sub("", str(x).strip().upper())
+
+
+# --- ref color parsing helpers (module-level) ---
+_HEX6_RE = re.compile(r"^[0-9a-fA-F]{6}$")
+_HEX8_RE = re.compile(r"^[0-9a-fA-F]{8}$")
+_CELL_RE = re.compile(r"^[A-Za-z]{1,3}[0-9]{1,7}$")  # A1形式ざっくり
+
+def _normalize_rgb(s: str) -> str | None:
+    t = (s or "").strip()
+    if not t:
+        return None
+    if t.startswith("#"):
+        t = t[1:]
+    if _HEX8_RE.match(t):
+        return t[-6:].upper()  # ARGB -> RGB
+    if _HEX6_RE.match(t):
+        return t.upper()
+    return None
+
+
+def _is_cell_addr(s: str) -> bool:
+    return bool(_CELL_RE.match((s or "").strip()))
+
 
 
 # =========================
@@ -359,42 +385,57 @@ class ExcelRangeRepository:
 
     def get_ref_colors(self, kind: str) -> Dict[str, str]:
         """
-        kind ごとに定義された「固定セル番地」から見本色を読む（キャッシュあり）。
-        """
-        if kind in self._ref_color_cache:
-            return self._ref_color_cache[kind]
+        kind ごとの見本色(tag -> RGB)を返す（キャッシュあり）。
 
-        if kind not in self.ref_color_cells:
+        REF_COLOR_CELLS は「RGB直書き」or「セル番地」の両方を許可する：
+          - RGB:  "f4cccc" / "#f4cccc" / "FFf4cccc"
+          - A1 :  "D144" のようなセル番地（黒やテーマ色など例外用）
+        """
+        kind_u = (kind or "").strip().upper()
+
+        if kind_u in self._ref_color_cache:
+            return self._ref_color_cache[kind_u]
+
+        if kind_u not in self.ref_color_cells:
             raise KeyError(
-                f"REF_COLOR_CELLS not defined for kind={kind}. "
+                f"REF_COLOR_CELLS not defined for kind={kind_u}. "
                 f"Defined kinds={list(self.ref_color_cells.keys())}"
             )
 
         result: Dict[str, str] = {}
-        for tag, addr in self.ref_color_cells[kind].items():
-            cell = self.ws[addr]
-            rgb = self._read_fill_rgb(cell)
-            result[tag] = rgb
+        mapping = self.ref_color_cells[kind_u]
 
-            if self.enable_debug:
-                fg = getattr(cell.fill, "fgColor", None)
-                fg_type = self._safe_getattr(fg, "type") if fg is not None else None
+        for tag, raw in mapping.items():
+            raw_s = str(raw).strip()
 
-                # type に応じて「有効なものだけ」読む（＋安全化）
-                fg_rgb = self._safe_getattr(fg, "rgb") if fg is not None and (fg_type in (None, "rgb")) else None
-                fg_theme = self._safe_getattr(fg, "theme") if fg is not None and fg_type == "theme" else None
-                fg_indexed = self._safe_getattr(fg, "indexed") if fg is not None and fg_type == "indexed" else None
+            # 1) RGB直指定
+            rgb = _normalize_rgb(raw_s)
+            if rgb is not None:
+                result[tag] = rgb
+                continue
 
-                print(
-                    f"[REPO][REF-FIXED] kind={kind} tag={tag} cell={cell.coordinate} "
-                    f"patternType={getattr(cell.fill, 'patternType', None)} "
-                    f"fg.type={fg_type} fg.rgb={fg_rgb} fg.theme={fg_theme} fg.indexed={fg_indexed} "
-                    f"read_rgb={rgb}",
-                    flush=True,
-                )
+            # 2) セル番地
+            if _is_cell_addr(raw_s):
+                cell = self.ws[raw_s]
+                rgb_read = self._read_fill_rgb(cell)  # 既存の色読み
+                rgb2 = _normalize_rgb(rgb_read)
+                if rgb2 is None:
+                    raise ValueError(
+                        f"Could not read RGB from cell {raw_s} for kind={kind_u} tag={tag}. "
+                        f"Read='{rgb_read}'. Consider specifying RGB directly in REF_COLOR_CELLS."
+                    )
+                result[tag] = rgb2
+                continue
 
-        self._ref_color_cache[kind] = result
+            # 3) 不正値
+            raise ValueError(
+                f"Invalid REF_COLOR_CELLS value: kind={kind_u} tag={tag} value={raw_s!r} "
+                f"(expected RGB hex like 'f4cccc' or cell addr like 'D144')"
+            )
+
+        self._ref_color_cache[kind_u] = result
         return result
+
 
     # =========================
     # Color reader
@@ -433,9 +474,6 @@ class ExcelRangeRepository:
         if len(rgb) == 8:
             rgb = rgb[-6:]
         elif len(rgb) != 6:
-            return ""
-
-        if rgb == "000000":
             return ""
 
         return rgb

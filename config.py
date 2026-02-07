@@ -1,100 +1,140 @@
 # config.py
 from __future__ import annotations
+from pathlib import Path
+
+EXCEL_PATH = r"C:\MyPokerApp\data_src\PREFLOP_GAME_FOR_BEGINNERS-INTERMEDIATE.xlsx"
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = (BASE_DIR / "data").resolve()
+
+JSON_PATH = (DATA_DIR / "datasheet_ranges.json").resolve()
+FINAL_TAGS_JSON_PATH = (DATA_DIR / "final_tags.json").resolve()
+
+
 
 """
 Poker Trainer / JUEGO 設定
 
 用語メモ（注釈）
 - kind: 表の種類キー（例: "OR", "OR_SB", "ROL"）
-- AA_SEARCH_RANGES: kind ごとに「pos文字列（EP/MP/CO/BTN/SB 等）」を探す範囲（A1表記）
+- AA_SEARCH_RANGES: kind ごとに「posセル」を探索する範囲（A1表記）
 - GRID_TOPLEFT_OFFSET: AAアンカーセルから 13×13 グリッド左上へ移動するオフセット (row_offset, col_offset)
-- REF_COLOR_CELLS: 色見本セルの場所。Repository がここを読んで tag を決める
+- REF_COLOR_CELLS: 色見本セル（凡例）の定義。Repository がここを読んで tag を返す
 """
-
 # =========================
 # Paths
 # =========================
-
-# Excel（JUEGO レンジ表）
-# NOTE:
-# ここは必ず実ファイルに合わせて更新してください。
-# 例: r"C:\MyPokerApp\PREFLOP_GAME_FOR_BEGINNERS-INTERMEDIATE.xlsx"
-EXCEL_PATH = r"C:\MyPokerApp\PREFLOP_GAME_FOR_BEGINNERS-INTERMEDIATE.xlsx"
-
-# 参照するシート名（Workbook 内のシート名と一致させる）
-# NOTE: 新Excelでシート名が違う場合はここを更新
-SHEET_NAME = "zeros_range"
-
-# カード画像フォルダ
+SHEET_NAME = "Datasheet"
 CARD_IMAGE_DIR = r"C:\MyPokerApp\cards"
-
 
 # =========================
 # AA Anchor Search Ranges
 # =========================
-# 問題種別ごとに「posセル」を探索する範囲（A1表記）
 # posセルから (down=+3, left=-2) が "AA" アンカー
 AA_SEARCH_RANGES = {
-    "OR":    "F11:BL26",     # EP〜BTN
-    "ROL":   "U28:DE43",
-    "OR_SB": "CC11:CP26",    # SB 用（特殊）
-    "3BET":  "C54:BK98",
+    "OR":               "B2:BH17",     # EP〜BTN
+    "ROL":              "B19:CL34",
+    "OR_SB":            "BJ2:BW17",    # SB 用（特殊）
+    "CC_3BET":          "B36:FI51",
+    "3BET_VS_COLD4BET": "B53:BW68",
+    "CALL_3BET_4BET":   "B70:EE85",
+    "CC_3BET_MULTI":    "B87:ET102",
 }
-
 
 # =========================
 # Grid Layout
 # =========================
-# AA 起点からレンジグリッド左上(top-left)へのオフセット
-# (row_offset, col_offset)
-#
-# NOTE:
-# - ここがズレると (r0,c0) の参照セルが全てズレます。
-# - enable_debug=True にして repo_dbg の "grid_topleft" と "cell_rgb" を見て検証してください。
 GRID_TOPLEFT_OFFSET = (0, 0)
-    
 
 # =========================
 # Reference Color Cells (Fixed)
 # =========================
-# kind -> tag -> "A1セル番地"
-#
-# 注釈：
-# - Repository は、このセルの塗りつぶし色(RGB)を読み取って「見本色」とする
-# - ハンドセルの色(RGB)と一致した tag を返す
-# - 無色/不一致は "FOLD" 扱い（Repository 側ロジック）
+# kind -> tag -> "RGB6(例: f4cccc)" or "A1セル番地"
 REF_COLOR_CELLS = {
+    # ========= OR =========
     "OR": {
-        "TIGHT": "H25",
-        "LOOSE": "H26",
+        # 旧: TIGHT / LOOSE
+        "OPEN_TIGHT": "9fc5e8",
+        "OPEN_LOOSE": "f4cccc",
     },
 
-    # SB（特殊）
-    # - OR_SB は複数タグを扱う
+    # ========= OR_SB =========
     "OR_SB": {
-        "RAISE_3BB":   "CF24",
-        "LimpCx3o":    "CF25",
-        "LimpCx2.5o":  "CF26",
-        "LimpCx2.25o": "CJ25",
-        "LimpCx2o":    "CJ26",
+        # 旧: RAISE_3BB
+        "OPEN_3_BB":         "f4cccc",
+        # 旧: LimpCx*o
+        "LIMP_CALL_3_BB":    "6aa84f",
+        "LIMP_CALL_2_5_BB":  "b6d7a8",
+        "LIMP_CALL_2_25_BB": "d9d2e9",
+        "LIMP_CALL_2_BB":    "ffe599",
     },
 
+    # ========= ROL =========
     "ROL": {
-        "AlwaysROL": "J41",
-        "ROLvsFISH": "J42",
-        "OLvsFISH":  "J43",
+        # 旧: AlwaysROL / ROLvsFISH / OLvsFISH
+        "ROL_ALWAYS":       "9fc5e8",
+        "ROL_VS_FISH":      "f4cccc",
+        "OVERLIMP_VS_FISH": "d9ead3",
     },
 
-    "3BET": {
-        "3bet/5Bet": "F49",
-        "3bet/Fold4bet": "F50",
-        "3bet/C4bet": "F51",
-        "C4bet_Situacional": "F52",
-        "CCvs3.5x": "L49",
-        "CCvs3x": "L50",
-        "CCvs2.5x": "L51",
-        "CCvs2.25x": "Q49",
-        "CCvs2x": "Q50",
-        },
+    # ========= CC_3BET =========
+    # 3bet後の4bet対応 + オープンサイズ別コール
+    "CC_3BET": {
+        # 旧: 3bet/5Bet / 3bet/Fold4bet / 3bet/C4bet / C4bet_Situacional
+        "3BET_VS_4BET_SHOVE":            "660000",
+        "3BET_VS_4BET_FOLD":             "cc0000",
+        "3BET_VS_4BET_CALL":             "1c4587",
+        "3BET_VS_4BET_CALL_SITUATIONAL": "a4c2f4",
 
+        # 旧: CCvs3.5x など（定義: “X以下ならコール”）
+        "CALL_VS_OPEN_LE_3_5X": "38761d",
+        "CALL_VS_OPEN_LE_3X":   "6aa84f",
+        "CALL_VS_OPEN_LE_2_5X": "b6d7a8",
+        "CALL_VS_OPEN_LE_2_25X":"d9d2e9",
+        "CALL_VS_OPEN_EQ_2X":   "ffe599",
+    },
+
+    # ========= 3BET_VS_COLD4BET =========
+    "3BET_VS_COLD4BET": {
+        "3BET_VS_4BET_SHOVE":            "660000",
+        "3BET_VS_4BET_FOLD":             "cc0000",
+        "3BET_VS_4BET_CALL":             "1c4587",
+        "3BET_VS_4BET_CALL_SITUATIONAL": "a4c2f4",
+    },
+
+    # ========= CALL_3BET_4BET =========
+    "CALL_3BET_4BET": {
+        # 旧: 4BetCallvsAI / 4Bet/Fold5bet
+        "4BET_VS_5BET_CALL": "660000",
+        "4BET_VS_5BET_FOLD": "cc0000",
+
+        # 旧: AIvs12bbs/4Bet_C(IP) / AIvs13.5bbs/4Bet_C(IP)
+        # NOTE: ここは “IP/OOP の分岐” を後で入れる（色は同じでも意味が変わり得る）
+        "SHOVE_VS_3BET_GE_12BB_IP":   "000000",
+        "SHOVE_VS_3BET_GE_13_5BB_IP": "000000",
+
+        # 旧: Call_3B_12bbs, Call_3B_9.5bbs, ...
+        "CALL_VS_3BET_LE_12BB":  "1c4587",
+        "CALL_VS_3BET_LE_9_5BB": "38761d",
+        "CALL_VS_3BET_LE_8BB":   "6aa84f",
+        "CALL_VS_3BET_LE_7BB":   "b6d7a8",
+        "CALL_VS_3BET_LE_6BB":   "d9d2e9",
+        "CALL_VS_3BET_LE_5BB":   "ffe599",
+
+        # 旧: Fold（ピンク）
+        "FOLD_VS_3BET": "e6b8af",
+    },
+
+    # ========= CC_3BET_MULTI =========
+    # 旧configは同一キーの重複で壊れてた（最後の1個しか残らない）ので修正
+    "CC_3BET_MULTI": {
+        "3BET_VS_4BET_SHOVE": "660000",
+        "3BET_VS_4BET_FOLD":  "cc0000",
+
+        "CALL_VS_OPEN_LE_3_5X":  "38761d",
+        "CALL_VS_OPEN_LE_3X":    "6aa84f",
+        "CALL_VS_OPEN_LE_2_5X":  "b6d7a8",
+        "CALL_VS_OPEN_LE_2_25X": "d9d2e9",
+        "CALL_VS_OPEN_EQ_2X":    "ffe599",
+    },
 }
