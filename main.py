@@ -1,58 +1,56 @@
-﻿# main.py
-from __future__ import annotations
-
-import logging
+﻿import logging
+import random
+import sys
 import tkinter as tk
+from pathlib import Path
 
-import openpyxl
-
+from config import FINAL_TAGS_JSON_PATH
 from controller import GameController
 from core.engine import PokerEngine
 from core.generator import JuegoProblemGenerator
 from juego_judge import JUEGOJudge
-from excel_range_repository import ExcelRangeRepository
+from json_range_repository import JsonRangeRepository
 from ui import PokerTrainerUI
 
-from config import (
-    EXCEL_PATH,
-    SHEET_NAME,
-    AA_SEARCH_RANGES,
-    GRID_TOPLEFT_OFFSET,
-    REF_COLOR_CELLS,
-)
+
+def _ensure_final_tags_exists() -> None:
+    p = Path(FINAL_TAGS_JSON_PATH)
+    if not p.exists():
+        msg = (
+            "[FATAL] final_tags.json not found.\n"
+            f"Expected: {p}\n"
+            "Run build first:\n"
+            "  .\\.venv-build\\Scripts\\python -m tools.build_final_tags_json\n"
+        )
+        print(msg, file=sys.stderr)
+        raise SystemExit(1)
 
 
 def main() -> None:
+    _ensure_final_tags_exists()
     logging.basicConfig(level=logging.INFO)
 
-    # ---- Data access (Workbook -> Repo) ----
-    wb = openpyxl.load_workbook(EXCEL_PATH, data_only=True)
-    repo = ExcelRangeRepository(
-        wb=wb,
-        sheet_name=SHEET_NAME,
-        aa_search_ranges=AA_SEARCH_RANGES,
-        grid_topleft_offset=GRID_TOPLEFT_OFFSET,
-        ref_color_cells=REF_COLOR_CELLS,
-        enable_debug=False,
-    )
+    # ---- Repo (JSON only) ----
+    repo = JsonRangeRepository(FINAL_TAGS_JSON_PATH)
 
     # ---- Judge ----
     judge = JUEGOJudge(repo)
 
     # ---- Generator ----
-    positions_3bet = repo.list_positions("3BET")
-    generator = JuegoProblemGenerator(positions_3bet=positions_3bet)
-
+    # NOTE: list_positions の kind 名はあなたのJSON設計に依存
+    positions_3bet = repo.list_positions("CC_3BET")
+    gen = JuegoProblemGenerator(
+        rng=random.Random(),
+        positions_3bet=positions_3bet,
+    )
 
     # ---- Core Engine ----
-    engine = PokerEngine(generator=generator, juego_judge=judge, enable_debug=False)
+    engine = PokerEngine(generator=gen, juego_judge=judge, enable_debug=False)
 
-    # ---- UI ----
+    # ---- UI / Controller ----
     root = tk.Tk()
     ui = PokerTrainerUI(root)
     controller = GameController(ui=ui, engine=engine, enable_debug=False)
-
-    # UIが controller を呼ぶ設計なら attach
     ui.controller = controller
 
     root.mainloop()
