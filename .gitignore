@@ -1,8 +1,28 @@
+# =========================
+# Python junk
+# =========================
 __pycache__/
 *.pyc
-data/
+*.pyo
+*.pyd
 
-# local assets (large)
+# =========================
+# Virtual env
+# =========================
+venv/
+env/
+.venv*/
+.venv-*/
+
+# =========================
+# OS / editor
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Local assets (large / private)
+# =========================
 *.xlsx
 *.xls
 ~$*.xlsx
@@ -10,12 +30,27 @@ data/
 cards/
 yokosawarange/
 
-# Tool outputs
+# =========================
+# Tool outputs / logs
+# =========================
 tools/out/
 *.log
 
+# =========================
+# Git metadata (never ship)
+# =========================
+.git/
 
-# virtual env
-.venv-*/
-venv/
-env/
+# =========================
+# Data folder policy:
+#   - ignore everything under data/
+#   - track only runtime-needed assets (whitelist)
+# =========================
+data/*
+!data/
+!data/final_tags.json
+!data/ranges_pack.json
+
+# Telemetry runtime artifacts (never commit)
+data/events*.jsonl
+data/user_id*.txt

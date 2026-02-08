@@ -6,6 +6,9 @@ import traceback
 from types import SimpleNamespace
 from typing import Any, Optional
 
+from pathlib import Path
+from core.telemetry import Telemetry
+
 from core.engine import PokerEngine, SubmitResult
 from core.models import Difficulty, ProblemType, OpenRaiseProblemContext
 
@@ -36,9 +39,155 @@ class GameController:
                 logger.debug("Traceback:\n%s", traceback.format_exc())
             return None
 
-    # -------------------------
-    # Range popup
-    # -------------------------
+    
+    def _telemetry(self) -> Telemetry:
+        # __init__ を触らずに遅延生成（最小差分）
+        if not hasattr(self, "_telemetry_obj") or self._telemetry_obj is None:
+            # controller.py がプロジェクト直下にある前提で project_root を推定
+            project_root = Path(__file__).resolve().parent
+            self._telemetry_obj = Telemetry(project_root=project_root)
+        return self._telemetry_obj
+        
+
+
+        # -------------------------
+        # Start / Reset
+        # -------------------------
+    def start_yokosawa_open(self) -> None:
+        self.engine.start_yokosawa_open()
+        self.new_question()
+
+    def start_juego_beginner(self) -> None:
+        self.engine.start_juego(Difficulty.BEGINNER)
+        self.new_question()
+
+    def start_juego_intermediate(self) -> None:
+        self.engine.start_juego(Difficulty.INTERMEDIATE)
+        self.new_question()
+
+    def start_juego_advanced(self) -> None:
+        self.engine.start_juego(Difficulty.ADVANCED)
+        self.new_question()
+
+    def reset_state(self) -> None:
+        self.engine.reset_state()
+
+        # -------------------------
+        # Next question
+        # -------------------------
+    def new_question(self) -> None:
+        self._ui_call("close_range_grid_popup")
+        self._ui_call("unlock_all_answer_buttons")
+
+        self._ui_call("hide_next_button")
+        self._ui_call("hide_followup_size_buttons")
+
+        if self.engine.current_problem == ProblemType.YOKOSAWA_OPEN:
+            self.ui.show_text("【ヨコサワ式】オープンレイズ問題（未実装/既存実装に合わせてください）")
+            return
+
+        if self.engine.difficulty is None:
+            self.ui.show_text("難易度を選択してください（初級/中級/上級）")
+            return
+
+        try:
+            generated = self.engine.new_question()
+        except Exception as e:
+            self.ui.show_text(f"内部エラー：問題生成に失敗しました: {e}")
+            logger.error("[CTRL] engine.new_question failed: %s", e, exc_info=True)
+            return
+
+        # ★ここに追加：表示ラベルは “生成結果” に従う（最も安全）
+        mode = getattr(generated, "answer_mode", "")     
+
+        self._ui_call("set_answer_mode", getattr(generated, "answer_mode", ""))
+
+        ctx = generated.ctx
+        self._ui_call("deal_cards", ctx.hole_cards)
+        self._ui_call("set_hand_pos", hand=ctx.excel_hand_key, pos=ctx.position)
+
+        self.ui.show_text(generated.header_text)
+
+        # --- Telemetry: question_shown ---
+        try:
+            self._telemetry().on_question_shown(
+                engine=self.engine,
+                ctx=ctx,
+                answer_mode=getattr(generated, "answer_mode", "") or "",
+                header_text=generated.header_text or "",
+            )
+        except Exception as e:
+            logger.warning("[CTRL] telemetry question_shown failed: %s", e, exc_info=True)
+
+        # -------------------------
+        # Submit
+        # -------------------------
+    def submit(self, user_action: Optional[str] = None) -> None:
+        res: SubmitResult = self.engine.submit(user_action)
+        # --- Telemetry: answer_submitted ---
+        try:
+            ctx = getattr(self.engine, "context", None)  # 直近問題のctx（あなたの設計だとここが正）
+            if ctx is not None:
+                # answer_mode は「直近表示のgenerated」から取るのが理想だが、
+                # 最小実装として engine 側/ctx 側に無いなら空でOK
+                answer_mode = ""
+                self._telemetry().on_answer_submitted(
+                    engine=self.engine,
+                    ctx=ctx,
+                    answer_mode=answer_mode,
+                    user_action=user_action or "",
+                    res=res,
+                )
+        except Exception as e:
+            logger.warning("[CTRL] telemetry answer_submitted failed: %s", e, exc_info=True)
+
+
+        if res is None:
+            self.ui.show_text("[BUG] engine.submit() returned None. Check engine.submit() return paths.")
+            return
+
+        # 1) 結果テキスト
+        self.ui.show_text(res.text)
+
+        # 2) follow-up UI の掃除（必要なときだけ）
+        if getattr(res, "hide_followup_buttons", False):
+            self._ui_call("hide_followup_size_buttons")
+
+        # 3) follow-up 表示が最優先：このとき Next は必ず隠して終了
+        if getattr(res, "show_followup_buttons", False):
+            self._ui_call("hide_next_button")
+            choices = res.followup_choices or [2, 2.25, 2.5, 3]
+            self._ui_call(
+                "show_followup_size_buttons",
+                choices=choices,
+                prompt=res.followup_prompt,
+            )
+            return
+
+        # 4) Next
+        if getattr(res, "show_next_button", False):
+            self._ui_call("show_next_button")
+        else:
+            self._ui_call("hide_next_button")
+
+        # 5) 不正解ならレンジ表（follow-up不正解も含む）
+        if res.is_correct is False and self.engine.context is not None:
+            jr = res.judge_result
+            if jr is None:
+                jr = SimpleNamespace(reason=res.text, debug={})
+
+            if getattr(jr, "correct", None) is True:
+                dbg = getattr(jr, "debug", None) or {}
+                jr = SimpleNamespace(reason=getattr(jr, "reason", ""), debug=dbg)
+
+            self._try_show_range_grid_on_incorrect(
+                ctx=self.engine.context,
+                result=jr,
+                override_reason=res.text,
+            )
+        # -------------------------
+        # Range popup
+        # -------------------------
     def _try_show_range_grid_on_incorrect(self, ctx: OpenRaiseProblemContext, result: Any, override_reason: str | None = None) -> None:
         """
         不正解時にだけ、参照しているレンジ表をポップアップで表示する。
@@ -122,114 +271,6 @@ class GameController:
             logger.warning("[CTRL] show_range_grid_popup failed: %s", e)
             if self.enable_debug:
                 logger.debug("Traceback:\n%s", traceback.format_exc())
-
-    # -------------------------
-    # Start / Reset
-    # -------------------------
-    def start_yokosawa_open(self) -> None:
-        self.engine.start_yokosawa_open()
-        self.new_question()
-
-    def start_juego_beginner(self) -> None:
-        self.engine.start_juego(Difficulty.BEGINNER)
-        self.new_question()
-
-    def start_juego_intermediate(self) -> None:
-        self.engine.start_juego(Difficulty.INTERMEDIATE)
-        self.new_question()
-
-    def start_juego_advanced(self) -> None:
-        self.engine.start_juego(Difficulty.ADVANCED)
-        self.new_question()
-
-    def reset_state(self) -> None:
-        self.engine.reset_state()
-
-    # -------------------------
-    # Next question
-    # -------------------------
-    def new_question(self) -> None:
-        self._ui_call("close_range_grid_popup")
-        self._ui_call("unlock_all_answer_buttons")
-
-        self._ui_call("hide_next_button")
-        self._ui_call("hide_followup_size_buttons")
-
-        if self.engine.current_problem == ProblemType.YOKOSAWA_OPEN:
-            self.ui.show_text("【ヨコサワ式】オープンレイズ問題（未実装/既存実装に合わせてください）")
-            return
-
-        if self.engine.difficulty is None:
-            self.ui.show_text("難易度を選択してください（初級/中級/上級）")
-            return
-
-        try:
-            generated = self.engine.new_question()
-        except Exception as e:
-            self.ui.show_text(f"内部エラー：問題生成に失敗しました: {e}")
-            logger.error("[CTRL] engine.new_question failed: %s", e, exc_info=True)
-            return
-
-        # ★ここに追加：表示ラベルは “生成結果” に従う（最も安全）
-        mode = getattr(generated, "answer_mode", "")     
-
-        self._ui_call("set_answer_mode", getattr(generated, "answer_mode", ""))
-
-        ctx = generated.ctx
-        self._ui_call("deal_cards", ctx.hole_cards)
-        self._ui_call("set_hand_pos", hand=ctx.excel_hand_key, pos=ctx.position)
-
-        self.ui.show_text(generated.header_text)
-
-    # -------------------------
-    # Submit
-    # -------------------------
-    def submit(self, user_action: Optional[str] = None) -> None:
-        res: SubmitResult = self.engine.submit(user_action)
-
-        if res is None:
-            self.ui.show_text("[BUG] engine.submit() returned None. Check engine.submit() return paths.")
-            return
-
-        # 1) 結果テキスト
-        self.ui.show_text(res.text)
-
-        # 2) follow-up UI の掃除（必要なときだけ）
-        if getattr(res, "hide_followup_buttons", False):
-            self._ui_call("hide_followup_size_buttons")
-
-        # 3) follow-up 表示が最優先：このとき Next は必ず隠して終了
-        if getattr(res, "show_followup_buttons", False):
-            self._ui_call("hide_next_button")
-            choices = res.followup_choices or [2, 2.25, 2.5, 3]
-            self._ui_call(
-                "show_followup_size_buttons",
-                choices=choices,
-                prompt=res.followup_prompt,
-            )
-            return
-
-        # 4) Next
-        if getattr(res, "show_next_button", False):
-            self._ui_call("show_next_button")
-        else:
-            self._ui_call("hide_next_button")
-
-        # 5) 不正解ならレンジ表（follow-up不正解も含む）
-        if res.is_correct is False and self.engine.context is not None:
-            jr = res.judge_result
-            if jr is None:
-                jr = SimpleNamespace(reason=res.text, debug={})
-
-            if getattr(jr, "correct", None) is True:
-                dbg = getattr(jr, "debug", None) or {}
-                jr = SimpleNamespace(reason=getattr(jr, "reason", ""), debug=dbg)
-
-            self._try_show_range_grid_on_incorrect(
-                ctx=self.engine.context,
-                result=jr,
-                override_reason=res.text,
-            )
 
 
 

@@ -1,9 +1,11 @@
 # juego_judge.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
 
+import re
+from typing import Optional
 
 @dataclass
 class JudgeResult:
@@ -19,10 +21,6 @@ class JUEGOJudge:
     
     def __init__(self, repo) -> None:
         self.repo = repo
-
-
-
-
     # -------------------------
     # small helpers
     # -------------------------
@@ -60,6 +58,34 @@ class JUEGOJudge:
             return float(body)
         except Exception:
             return None
+    
+    def _norm_user_action(self, user_action: str) -> str:
+        """
+        UIから来る user_action の表記揺れを、採点用の基本アクションに揃える。
+        """
+        ua = (user_action or "").replace("\u00A0", " ").strip().upper()
+
+        if ua in ("FOLD", ""):
+            return "FOLD"
+
+        # UIが OPEN_3_BB / OPEN を返してくるケース
+        if ua.startswith("OPEN"):
+            return "RAISE"
+
+        # 通常のRAISE
+        if ua.startswith("RAISE"):
+            return "RAISE"
+
+        # UIによっては 3BET を返す/表示することがある
+        if ua.startswith("3BET"):
+            return "RAISE"
+
+        # コール系（あなたのUIでは LIMP_CALL を使う想定）
+        if ua in ("CALL", "LIMP_CALL", "LIMP", "CHECK_CALL"):
+            return "LIMP_CALL"
+
+        return ua
+
 
     # -------------------------
     # OR (EP/MP/CO/BTN)
@@ -97,49 +123,53 @@ class JUEGOJudge:
 
         return JudgeResult(action=correct_action, correct=correct, reason=reason, debug=debug)
 
-    # -------------------------
-    # OR_SB (SB)
-    # 重要：detail_tag を debug に必ず残す（2段目に必要）
-    # -------------------------
+    def _norm_tag(self, tag: str) -> str:
+            # NBSP など見えない空白を潰して比較が死なないようにする
+            return (tag or "").replace("\u00A0", " ").strip()
+
+
+    def _parse_raise_tag_to_bb(self, tag_norm: str) -> float | None:
+        t = (tag_norm or "").upper()
+        m = re.search(r"(?:RAISE|OPEN)[^0-9]*([0-9]+(?:\.[0-9]+)?)\s*BB", t)
+        return float(m.group(1)) if m else None
+
+
     def judge_or_sb(self, position: str, hand: str, user_action: str, loose: bool) -> JudgeResult:
         kind = "OR_SB"
-
-        # ★ここを統一：repoの返り値が tag単体でも (tag,dbg) でも動く
         tag, repo_dbg = self._repo_get_tag(kind, position, hand)
 
-        # 正規化（空白除去）
-        tag_norm = (tag or "").strip()
+        tag_norm = self._norm_tag(tag)
         t = tag_norm.upper()
 
-        if t == "RAISE_3BB":
+        # ★tag側も OPEN を RAISE 扱いにする（ここが肝）
+        if t.startswith("RAISE") or t.startswith("OPEN"):
             correct_action = "RAISE"
         elif t.startswith("LIMPC"):
             correct_action = "LIMP_CALL"
         else:
             correct_action = "FOLD"
 
-        ua = (user_action or "").strip().upper()
+        ua_raw = user_action or ""
+        ua = self._norm_user_action(ua_raw)   # ★ここが肝
         is_correct = (ua == correct_action)
 
-        # ★未定義関数を使わない（まず落ちないことを優先）
-        reason = f"Tag={tag_norm} -> {correct_action}"
+
+        reason = f"Tag={tag_norm!r} -> {correct_action}"
 
         debug = {
             "kind": kind,
             "position": position,
             "hand": hand,
-
-            # ★ここが2段目に必要（すでに正しい）
-            "detail_tag": tag_norm,  # 例: "LimpCx2.25o"
-
-            "tag": tag,
+            "detail_tag": tag_norm,
             "tag_upper": t,
-            "loose": loose,  # OR_SBでは未使用だが保持は可
-            "user_action": ua,
+            "loose": loose,
+            "user_action_raw": (ua_raw or "").strip(),
+            "user_action": ua,   # 正規化後
             "correct_action": correct_action,
+            "expected_tag": tag_norm,
+            "expected_raise_size_bb": self._parse_raise_tag_to_bb(tag_norm),  # ★1回だけ
             "repo": repo_dbg,
             "followup_expected_max_bb": self._parse_limp_tag_to_max_bb(tag_norm),
-
         }
 
         return JudgeResult(
@@ -148,28 +178,28 @@ class JUEGOJudge:
             reason=reason,
             debug=debug,
         )
-    # -------------------------
-    # 3BET（まずは 1段：FOLD / CALL / 3BET のみ）
-    # -------------------------
+        
+
     def judge_3bet(self, position: str, hand: str, user_action: str, loose: bool) -> JudgeResult:
         kind = "3BET"
         tag, repo_dbg = self._repo_get_tag(kind, position, hand)
 
-        tag_norm = (tag or "").strip()
+        tag_norm = self._norm_tag(tag)
         t = tag_norm.upper()
         ua = (user_action or "").strip().upper()
 
-        # まずはCALLでOK（閾値は無視して全部CALL扱い）
         if t.startswith("CCVS") or "CCVS" in t:
+            # UIが LIMP_CALL を返す場合もあるので両対応にしておく
             correct_action = "CALL"
-        # 3bet系（4bet来たら〜の枝は今回は無視して「3BETする」だけ）
+            is_correct = (ua in ("CALL", "LIMP_CALL"))
         elif t.startswith("3BET") or t.startswith("C4BET"):
-            correct_action = "RAISE"   # UI上は「RAISE」ボタン＝「3BET」扱いでOK
+            correct_action = "RAISE"
+            is_correct = (ua == "RAISE")
         else:
             correct_action = "FOLD"
+            is_correct = (ua == "FOLD")
 
-        is_correct = (ua == correct_action)
-        reason = f"Tag={tag_norm} -> {correct_action}"
+        reason = f"Tag={tag_norm!r} -> {correct_action}"
 
         debug = {
             "kind": kind,
@@ -184,6 +214,8 @@ class JUEGOJudge:
         }
 
         return JudgeResult(action=correct_action, correct=is_correct, reason=reason, debug=debug)
+
+
 
     # -------------------------
     # BB_ISO（別モード用：コール/リンプ後のBB判断）

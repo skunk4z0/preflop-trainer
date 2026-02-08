@@ -13,8 +13,6 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]  # C:\MyPokerApp
 sys.path.insert(0, str(ROOT))
 
-import config
-
 from config import REF_COLOR_CELLS  # ← これが使える前提にする（try/exceptは消す）
 
 

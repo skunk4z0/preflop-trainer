@@ -46,10 +46,14 @@ AA_SEARCH_RANGES = {
 # =========================
 GRID_TOPLEFT_OFFSET = (0, 0)
 
-# =========================
-# Reference Color Cells (Fixed)
-# =========================
-# kind -> tag -> "RGB6(例: f4cccc)" or "A1セル番地"
+
+# REF_COLOR_CELLS 運用ルール:
+# - 基本はRGB直書き: "f4cccc" / "#f4cccc" / "FFf4cccc"（最終的に6桁RGBへ正規化される）
+# - 例外としてセル番地(A1)も許可: "D144" など（黒/テーマ色などExcel依存の回避用）
+# - ビルド時に get_ref_colors() が正規化・検証し、読めない場合は例外で停止する（静かに壊さない）
+# - 黒("000000")も有効色として扱う（無色扱いしない）
+
+
 REF_COLOR_CELLS = {
     # ========= OR =========
     "OR": {

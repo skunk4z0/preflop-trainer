@@ -66,8 +66,6 @@ class JuegoProblemGenerator:
             return self._generate_rol_problem()
         if problem_type == ProblemType.JUEGO_3BET:
             return self._generate_3bet_problem()
-        if problem_type == ProblemType.JUEGO_3BET:
-            return self._generate_3bet_problem()
 
 
         card1, card2 = self._rng.sample(self._deck, 2)

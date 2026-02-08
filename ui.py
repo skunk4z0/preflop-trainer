@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import re
 import logging
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -32,7 +31,6 @@ class PokerTrainerUI:
 
         # 依存注入されるもの（main.pyでセット）
         self.controller: Optional[Any] = None
-        self.repo: Optional[Any] = None
 
         # popup参照
         self._range_popup = None
@@ -114,9 +112,6 @@ class PokerTrainerUI:
     # -------------------------
     def attach_controller(self, controller: Any) -> None:
         self.controller = controller
-
-    def attach_repo(self, repo: Any) -> None:
-        self.repo = repo
 
     # -------------------------
     # Start画面（戻る）関連
@@ -207,7 +202,7 @@ class PokerTrainerUI:
         if m in ("OR", "OR_SB"):
             self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
             self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
-            self.btn_limp_call.config(text="LIMP_CALL", command=lambda: self.on_answer("LIMP_CALL"))
+            self.btn_limp_call.config(text="LIMP/CALL", command=lambda: self.on_answer("LIMP_CALL"))
 
             self.btn_fold.pack(side=tk.LEFT, padx=5)
             self.btn_raise.pack(side=tk.LEFT, padx=5)

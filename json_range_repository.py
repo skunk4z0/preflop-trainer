@@ -5,13 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]
 
 def _normalize_hand_to_key(hand: str) -> str:
     return (hand or "").strip().upper().replace(" ", "")
 
 @dataclass(frozen=True)
-class TableMeta:
     note: str = ""
 
 class JsonRangeRepository:
