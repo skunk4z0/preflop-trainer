@@ -180,11 +180,11 @@ class PokerEngine:
 
         # 許可アクション（問題種別で切替）
         if self.current_problem == ProblemType.JUEGO_ROL:
-            allowed = {"FOLD", "RAISE", "CALL", "CHECK", "LIMP_CALL"}  # 互換
+            allowed = {"FOLD", "RAISE", "CALL", "CHECK", "LIMP_CALL", "LIMP"}  # 互換
         elif self.current_problem == ProblemType.JUEGO_3BET:
             allowed = {"FOLD", "RAISE", "CALL"}   # ★追加    
         else:
-            allowed = {"FOLD", "RAISE", "LIMP_CALL"}    
+            allowed = {"FOLD", "RAISE", "LIMP_CALL", "LIMP"}    
 
         if ua_raw not in allowed:
             return SubmitResult(
@@ -196,8 +196,10 @@ class PokerEngine:
                 judge_result=None,
             )
 
-        # ROL互換：LIMP_CALL を CALL と同義に扱う
-        ua = "CALL" if (self.current_problem == ProblemType.JUEGO_ROL and ua_raw == "LIMP_CALL") else ua_raw
+        # 互換入力を正規化
+        ua = ua_raw
+        if self.current_problem == ProblemType.JUEGO_ROL and ua_raw in {"LIMP_CALL", "LIMP"}:
+            ua = "CALL"
 
         ctx = self.context
         result: Any
@@ -280,23 +282,22 @@ class PokerEngine:
             self._log("===================")
 
         # -------------------------
-        # OR_SB かつ LimpCx 正解なら follow-up へ
+        # OR_SB で follow-up が必要なタグなら follow-up へ
         # -------------------------
-        tag = ""
+        requires_followup = False
+        expected_max = None
+        source_tag = ""
         if isinstance(dbg, dict):
-            for k in ("tag_upper", "detail_tag", "tag", "expected_tag"):
-                v = dbg.get(k)
-                if v:
-                    tag = str(v)
-                    break
+            requires_followup = bool(dbg.get("requires_followup", False))
+            expected_max = dbg.get("followup_expected_max_bb")
+            source_tag = str(dbg.get("detail_tag") or dbg.get("tag_upper") or "")
 
-        if self.current_problem == ProblemType.JUEGO_OR_SB and is_correct:
-            expected_max = self._parse_limp_tag_to_max_bb(tag)
-            if expected_max is not None:
+        if self.current_problem == ProblemType.JUEGO_OR_SB and is_correct and requires_followup:
+            if isinstance(expected_max, (int, float)):
                 self.followup = SBLimpFollowUpContext(
                     hand_key=ctx.excel_hand_key,
-                    expected_max_bb=expected_max,
-                    source_tag=tag,
+                    expected_max_bb=float(expected_max),
+                    source_tag=source_tag,
                 )
                 return SubmitResult(
                     text=(
@@ -325,20 +326,3 @@ class PokerEngine:
         )
 
 
-
-    @staticmethod
-    def _parse_limp_tag_to_max_bb(tag: str) -> Optional[float]:
-        if not tag:
-            return None
-        t = str(tag).strip()
-        if not t.upper().startswith("LIMPCX"):
-            return None
-
-        body = t[len("LimpCx"):].strip()
-        if body.lower().endswith("o"):
-            body = body[:-1]
-
-        try:
-            return float(body)
-        except (ValueError, TypeError):
-            return None

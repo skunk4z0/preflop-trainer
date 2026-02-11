@@ -57,40 +57,36 @@ GRID_TOPLEFT_OFFSET = (0, 0)
 REF_COLOR_CELLS = {
     # ========= OR =========
     "OR": {
-        # 旧: TIGHT / LOOSE
-        "OPEN_TIGHT": "9fc5e8",
-        "OPEN_LOOSE": "f4cccc",
+        "OPEN_RAISE": "9fc5e8",
+        "OPEN_RAISE_IF_FISH": "f4cccc",
     },
 
     # ========= OR_SB =========
     "OR_SB": {
-        # 旧: RAISE_3BB
-        "OPEN_3_BB":         "f4cccc",
-        # 旧: LimpCx*o
-        "LIMP_CALL_3_BB":    "6aa84f",
-        "LIMP_CALL_2_5_BB":  "b6d7a8",
-        "LIMP_CALL_2_25_BB": "d9d2e9",
-        "LIMP_CALL_2_BB":    "ffe599",
+        "SB_OPEN_RAISE_3BB": "f4cccc",
+        "SB_LIMP_CALL_LE_3BB": "6aa84f",
+        "SB_LIMP_CALL_LE_2_5BB": "b6d7a8",
+        "SB_LIMP_CALL_LE_2_25BB": "d9d2e9",
+        "SB_LIMP_CALL_LE_2BB": "ffe599",
     },
 
     # ========= ROL =========
     "ROL": {
-        # 旧: AlwaysROL / ROLvsFISH / OLvsFISH
-        "ROL_ALWAYS":       "9fc5e8",
-        "ROL_VS_FISH":      "f4cccc",
-        "OVERLIMP_VS_FISH": "d9ead3",
+        "ROL_RAISE_4BB__BB_VS_SB": "9fc5e8",
+        "ROL_CALL__VS_FISH": "f4cccc",
+        "OVERLIMP_CHECK__BB_VS_SB": "d9ead3",
     },
 
     # ========= CC_3BET =========
     # 3bet後の4bet対応 + オープンサイズ別コール
     "CC_3BET": {
-        # 旧: 3bet/5Bet / 3bet/Fold4bet / 3bet/C4bet / C4bet_Situacional
+        # 旧タグ体系は削除済み（新タグへ統一）
         "3BET_VS_4BET_SHOVE":            "660000",
         "3BET_VS_4BET_FOLD":             "cc0000",
         "3BET_VS_4BET_CALL":             "1c4587",
         "3BET_VS_4BET_CALL_SITUATIONAL": "a4c2f4",
 
-        # 旧: CCvs3.5x など（定義: “X以下ならコール”）
+        # 旧タグ体系は削除済み（新タグへ統一）
         "CALL_VS_OPEN_LE_3_5X": "38761d",
         "CALL_VS_OPEN_LE_3X":   "6aa84f",
         "CALL_VS_OPEN_LE_2_5X": "b6d7a8",
@@ -108,16 +104,16 @@ REF_COLOR_CELLS = {
 
     # ========= CALL_3BET_4BET =========
     "CALL_3BET_4BET": {
-        # 旧: 4BetCallvsAI / 4Bet/Fold5bet
+        # 旧タグ体系は削除済み（新タグへ統一）
         "4BET_VS_5BET_CALL": "660000",
         "4BET_VS_5BET_FOLD": "cc0000",
 
-        # 旧: AIvs12bbs/4Bet_C(IP) / AIvs13.5bbs/4Bet_C(IP)
+        # 旧タグ体系は削除済み（新タグへ統一）
         # NOTE: ここは “IP/OOP の分岐” を後で入れる（色は同じでも意味が変わり得る）
         "SHOVE_VS_3BET_GE_12BB_IP":   "000000",
         "SHOVE_VS_3BET_GE_13_5BB_IP": "000000",
 
-        # 旧: Call_3B_12bbs, Call_3B_9.5bbs, ...
+        # 旧タグ体系は削除済み（新タグへ統一）
         "CALL_VS_3BET_LE_12BB":  "1c4587",
         "CALL_VS_3BET_LE_9_5BB": "38761d",
         "CALL_VS_3BET_LE_8BB":   "6aa84f",
@@ -125,7 +121,7 @@ REF_COLOR_CELLS = {
         "CALL_VS_3BET_LE_6BB":   "d9d2e9",
         "CALL_VS_3BET_LE_5BB":   "ffe599",
 
-        # 旧: Fold（ピンク）
+        # 旧タグ体系は削除済み（新タグへ統一）
         "FOLD_VS_3BET": "e6b8af",
     },
 

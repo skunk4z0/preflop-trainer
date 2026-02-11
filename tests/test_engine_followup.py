@@ -23,8 +23,12 @@ class FakeGenerator:
 
 class FakeJudge:
     def judge_or_sb(self, position, hand, user_action, loose):
-        # LimpCx2.5o を正解扱いにする
-        dbg = {"tag_upper": "LIMPCX2.5O"}
+        dbg = {
+            "tag_upper": "SB_LIMP_CALL_LE_2_5BB",
+            "detail_tag": "SB_LIMP_CALL_LE_2_5BB",
+            "requires_followup": True,
+            "followup_expected_max_bb": 2.5,
+        }
         return SimpleNamespace(correct=True, reason="ok", debug=dbg)
 
     def judge_or(self, position, hand, user_action, loose):
@@ -39,7 +43,7 @@ class EngineFollowupTest(unittest.TestCase):
         eng.start_juego(Difficulty.BEGINNER)
         eng.new_question()
 
-        res = eng.submit("LIMP_CALL")
+        res = eng.submit("LIMP")
         self.assertTrue(res.show_followup_buttons)
         self.assertIsNotNone(eng.followup)
 
