@@ -133,7 +133,7 @@ class JuegoProblemGenerator:
     def _generate_rol_problem(self) -> OpenRaiseProblemContext:
         card1, card2 = self._rng.sample(self._deck, 2)
         position = self._rng.choice(["MP", "CO", "BTN", "SB", "BB_OOP", "BBvsSB"])
-        loose = self._rng.choice([True, False])  # ROLvsFISH のため
+        loose = self._rng.choice([True, False])
         raise_size = 4.0 if position == "BBvsSB" else 5.0
         hand_key = self.to_hand_key(card1, card2)
 
@@ -213,20 +213,3 @@ class JuegoProblemGenerator:
 
         suited = (s1 == s2)
         return r1 + r2 + ("s" if suited else "o")
-
-    @staticmethod
-    def parse_limp_tag_to_max_bb(tag: str) -> Optional[float]:
-        if not tag:
-            return None
-        t = str(tag).strip()
-        if not t.upper().startswith("LIMPCX"):
-            return None
-
-        body = t[len("LimpCx") :].strip()
-        if body.lower().endswith("o"):
-            body = body[:-1]
-
-        try:
-            return float(body)
-        except (ValueError, TypeError):
-            return None

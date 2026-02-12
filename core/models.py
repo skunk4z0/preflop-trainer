@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 class Difficulty(Enum):
@@ -21,6 +21,29 @@ class ProblemType(Enum):
     JUEGO_ROL = auto()       # 上級：ROL（リンプインに対する対応）
     JUEGO_BB_ISO = auto()    # 別モード：BBアイソ（必要なら使う）
     JUEGO_3BET = auto()
+
+
+class Action(Enum):
+    FOLD = "FOLD"
+    RAISE = "RAISE"
+    CALL = "CALL"
+    LIMP = "LIMP"
+    CHECK = "CHECK"
+
+
+@dataclass(frozen=True)
+class ExpectedAction:
+    action: Action
+    size_bb: Optional[float] = None
+    requires_followup: bool = False
+
+
+@dataclass(frozen=True)
+class ProblemContext:
+    position: str
+    loose_player_exists: bool
+    bb_vs_sb: bool
+    open_size_bb: float
 
 
 @dataclass(frozen=True)
