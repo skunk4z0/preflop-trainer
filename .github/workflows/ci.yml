@@ -1,0 +1,26 @@
+name: CI
+on:
+  pull_request:
+  push:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          # requirementsがあれば入れる（無ければ無視）
+          for f in requirements.txt requirements-dev.txt requirements-runtime.txt requirements-build.txt; do
+            if [ -f "$f" ]; then python -m pip install -r "$f"; fi
+          done
+          python -m pip install pytest
+
+      - name: Run tests
+        run: pytest -q
