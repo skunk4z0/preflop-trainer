@@ -23,6 +23,9 @@ def resolve_expected_action(tag: str, ctx: ProblemContext) -> ExpectedAction:
     t = (tag or "").strip().upper()
     pos = (ctx.position or "").strip().upper()
 
+    if t == "FOLD":
+        return ExpectedAction(action=Action.FOLD)
+
     if t == "OPEN_RAISE":
         return ExpectedAction(
             action=Action.RAISE,

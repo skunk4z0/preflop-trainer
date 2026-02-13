@@ -61,3 +61,15 @@ def test_resolve_expected_action(tag, ctx, exp_action, exp_size, exp_followup):
     assert got.action == exp_action
     assert got.size_bb == exp_size
     assert got.requires_followup is exp_followup
+
+
+@pytest.mark.parametrize(
+    "ctx",
+    [
+        _ctx("CO"),  # OR context
+        _ctx("BBvsSB", bb_vs_sb=True),  # ROL context
+    ],
+)
+def test_resolve_expected_action_fold_current_schema(ctx):
+    got = resolve_expected_action("FOLD", ctx)
+    assert got.action == Action.FOLD
