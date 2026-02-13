@@ -96,36 +96,9 @@ class JUEGOJudge:
         return self._judge(kind, position, hand, user_action, loose, tag, repo_dbg)
 
     def judge_3bet(self, position: str, hand: str, user_action: str, loose: bool) -> JudgeResult:
-        kind = "3BET"
+        kind = "CC_3BET"
         tag, repo_dbg = self._repo_get_tag(kind, position, hand)
-
-        tag_norm = (tag or "").replace("\u00A0", " ").strip()
-        t = tag_norm.upper()
-        ua = (user_action or "").strip().upper()
-
-        if t.startswith("CCVS") or "CCVS" in t:
-            correct_action = "CALL"
-            is_correct = (ua in ("CALL", "LIMP_CALL"))
-        elif t.startswith("3BET") or t.startswith("C4BET"):
-            correct_action = "RAISE"
-            is_correct = (ua == "RAISE")
-        else:
-            correct_action = "FOLD"
-            is_correct = (ua == "FOLD")
-
-        reason = f"Tag={tag_norm!r} -> {correct_action}"
-        debug = {
-            "kind": kind,
-            "position": position,
-            "hand": hand,
-            "detail_tag": tag_norm,
-            "tag_upper": t,
-            "loose": loose,
-            "user_action": ua,
-            "correct_action": correct_action,
-            "repo": repo_dbg,
-        }
-        return JudgeResult(action=correct_action, correct=is_correct, reason=reason, debug=debug)
+        return self._judge(kind, position, hand, user_action, loose, tag, repo_dbg)
 
     def judge_bb_iso(self, position: str, hand: str, user_action: str, limpers: int, loose: bool) -> JudgeResult:
         kind = "BB_ISO"

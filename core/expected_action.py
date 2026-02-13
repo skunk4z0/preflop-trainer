@@ -69,4 +69,16 @@ def resolve_expected_action(tag: str, ctx: ProblemContext) -> ExpectedAction:
             return ExpectedAction(action=Action.CHECK)
         return ExpectedAction(action=Action.CALL)
 
+    # 3BET pipeline tag families (final_tags.json schema)
+    if t == "FOLD_VS_3BET":
+        return ExpectedAction(action=Action.FOLD)
+    if t.startswith("CALL_VS_OPEN_") or t.startswith("CALL_VS_3BET_"):
+        return ExpectedAction(action=Action.CALL)
+    if t.startswith("3BET_VS_4BET_"):
+        return ExpectedAction(action=Action.RAISE)
+    if t.startswith("4BET_VS_5BET_"):
+        return ExpectedAction(action=Action.RAISE)
+    if t.startswith("SHOVE_VS_"):
+        return ExpectedAction(action=Action.RAISE)
+
     return ExpectedAction(action=Action.FOLD)

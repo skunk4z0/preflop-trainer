@@ -116,7 +116,7 @@ class JuegoProblemGenerator:
         card1, card2 = self._rng.sample(self._deck, 2)
         hand_key = self.to_hand_key(card1, card2)
 
-        # Excelのpos文字列に合わせる：repo.list_positions("3BET") から注入する想定
+        # Excelのpos文字列に合わせる：repo.list_positions("CC_3BET") から注入する想定
         pos = self._rng.choice(self._positions_3bet) if self._positions_3bet else "BB vs SB"
 
         return OpenRaiseProblemContext(
