@@ -79,8 +79,14 @@ class JUEGOJudge:
             "user_action": ua,
             "correct_action": expected_action,
             "expected_raise_size_bb": expected.size_bb if expected.action == Action.RAISE else None,
-            "requires_followup": expected.requires_followup,
-            "followup_expected_max_bb": expected.size_bb if expected.requires_followup else None,
+            "requires_followup": expected.followup_required,
+            "followup_required": expected.followup_required,
+            "followup_expected_max_bb": expected.size_bb if expected.followup_required else None,
+            "followup_expected_action": (
+                expected.followup_expected_action.value
+                if expected.followup_expected_action is not None
+                else None
+            ),
             "repo": repo_dbg,
         }
         return JudgeResult(action=expected_action, correct=correct, reason=reason, debug=debug)

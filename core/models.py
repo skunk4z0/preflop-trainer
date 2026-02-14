@@ -35,7 +35,13 @@ class Action(Enum):
 class ExpectedAction:
     action: Action
     size_bb: Optional[float] = None
-    requires_followup: bool = False
+    followup_expected_action: Optional[Action] = None
+    followup_required: bool = False
+
+    @property
+    def requires_followup(self) -> bool:
+        # Backward-compatible alias for older call sites.
+        return self.followup_required
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,16 @@ class SBLimpFollowUpContext:
     """
     hand_key: str
     expected_max_bb: float
+    source_tag: str
+
+
+@dataclass(frozen=True)
+class ActionFollowUpContext:
+    """
+    2段目：主にCC_3BETで、4BETに対する追加入力（FOLD/CALL/RAISE）を採点する。
+    """
+    hand_key: str
+    expected_action: Action
     source_tag: str
 
 

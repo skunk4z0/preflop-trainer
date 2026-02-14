@@ -333,8 +333,13 @@ class PokerTrainerUI:
         ctrl = getattr(self, "controller", None)
 
         for v in choices:
-            # 表示は 2 / 2.25 / 2.5 / 3 のように綺麗に
-            label = str(int(v)) if float(v).is_integer() else str(v)
+            # 数値選択(OR_SB)とアクション選択(CC_3BET)の両方に対応
+            label = str(v)
+            try:
+                fv = float(v)
+                label = str(int(fv)) if fv.is_integer() else str(fv)
+            except (TypeError, ValueError):
+                pass
 
             btn = tk.Button(
                 row,

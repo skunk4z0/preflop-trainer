@@ -50,8 +50,6 @@ def test_engine_submit_juego_3bet_uses_cc_3bet_tags(hand, action, expected_tag_p
     engine.new_question()
 
     result = engine.submit(action)
-
-    assert result.is_correct is True
     assert result.judge_result is not None
     dbg = result.judge_result.debug
     assert dbg["kind"] == "CC_3BET"
@@ -60,3 +58,49 @@ def test_engine_submit_juego_3bet_uses_cc_3bet_tags(hand, action, expected_tag_p
         assert dbg["detail_tag"] == "FOLD"
     else:
         assert dbg["detail_tag"].startswith(expected_tag_prefix)
+
+    followup_required = bool(dbg.get("followup_required", dbg.get("requires_followup", False)))
+    if followup_required:
+        assert result.is_correct is None
+        expected_followup_action = dbg.get("followup_expected_action")
+        assert expected_followup_action in {"FOLD", "CALL", "RAISE"}
+        followup_result = engine.submit(expected_followup_action)
+        assert followup_result.is_correct is True
+    else:
+        assert result.is_correct is True
+
+
+class FixedTagRepo:
+    def __init__(self, tag: str):
+        self._tag = tag
+
+    def get_tag_for_hand(self, kind, position, hand):
+        return self._tag, {"found_kind": True, "found_position": True}
+
+
+def test_engine_submit_juego_3bet_two_stage_followup_fold():
+    repo = FixedTagRepo("3BET_VS_4BET_FOLD")
+    judge = JUEGOJudge(repo)
+    ctx = OpenRaiseProblemContext(
+        hole_cards=("As", "Kd"),
+        position="BB VS BTN",
+        open_size_bb=0.0,
+        loose_player_exists=False,
+        excel_hand_key="AKo",
+        excel_position_key="BB VS BTN",
+        limpers=0,
+    )
+    gen = Fixed3BetGenerator(ctx)
+    engine = PokerEngine(generator=gen, juego_judge=judge, enable_debug=False)
+    engine.start_juego(Difficulty.INTERMEDIATE)
+    engine.new_question()
+
+    first = engine.submit("RAISE")
+    assert first.is_correct is None
+    assert first.show_followup_buttons is True
+    assert first.followup_choices == ["FOLD", "CALL", "RAISE"]
+
+    second = engine.submit("FOLD")
+    assert second.is_correct is True
+    assert second.show_next_button is True
+    assert second.show_followup_buttons is False

@@ -47,7 +47,7 @@ def resolve_expected_action(tag: str, ctx: ProblemContext) -> ExpectedAction:
         return ExpectedAction(
             action=Action.LIMP,
             size_bb=_SB_LIMP_THRESHOLD_BY_TAG[t],
-            requires_followup=True,
+            followup_required=True,
         )
 
     if t == "ROL_CALL":
@@ -70,12 +70,42 @@ def resolve_expected_action(tag: str, ctx: ProblemContext) -> ExpectedAction:
         return ExpectedAction(action=Action.CALL)
 
     # 3BET pipeline tag families (final_tags.json schema)
+    # CC_3BET is modeled as:
+    # - stage 1: open-facing decision (CALL / 3BET / FOLD)
+    # - stage 2: only for 3BET_VS_4BET_* (reaction to 4bet)
+    if t.startswith("3BET_VS_4BET_"):
+        if t == "3BET_VS_4BET_SHOVE":
+            return ExpectedAction(
+                action=Action.RAISE,
+                followup_expected_action=Action.RAISE,
+                followup_required=True,
+            )
+        if t == "3BET_VS_4BET_CALL":
+            return ExpectedAction(
+                action=Action.RAISE,
+                followup_expected_action=Action.CALL,
+                followup_required=True,
+            )
+        if t == "3BET_VS_4BET_FOLD":
+            return ExpectedAction(
+                action=Action.RAISE,
+                followup_expected_action=Action.FOLD,
+                followup_required=True,
+            )
+        if t == "3BET_VS_4BET_CALL_SITUATIONAL":
+            # TODO: support this with scenario-aware follow-up generation.
+            return ExpectedAction(action=Action.RAISE)
+        return ExpectedAction(action=Action.RAISE)
+
+    if t.startswith("CALL_VS_OPEN_"):
+        return ExpectedAction(action=Action.CALL)
+
     if t == "FOLD_VS_3BET":
         return ExpectedAction(action=Action.FOLD)
-    if t.startswith("CALL_VS_OPEN_") or t.startswith("CALL_VS_3BET_"):
+    if t.startswith("CALL_VS_3BET_"):
         return ExpectedAction(action=Action.CALL)
-    if t.startswith("3BET_VS_4BET_"):
-        return ExpectedAction(action=Action.RAISE)
+    if t == "4BET_VS_5BET_FOLD":
+        return ExpectedAction(action=Action.FOLD)
     if t.startswith("4BET_VS_5BET_"):
         return ExpectedAction(action=Action.RAISE)
     if t.startswith("SHOVE_VS_"):

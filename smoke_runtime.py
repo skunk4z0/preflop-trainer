@@ -94,6 +94,7 @@ def run_smoke(iterations: int = 200, seed: int = 20260213, verbose: bool = True)
 
     counts = {"OR": 0, "OR_SB": 0, "3BET": 0, "ROL": 0}
     followup_count = 0
+    followup_count_3bet = 0
     failures: list[str] = []
 
     for i in range(iterations):
@@ -111,23 +112,30 @@ def run_smoke(iterations: int = 200, seed: int = 20260213, verbose: bool = True)
 
             res = engine.submit(expected_action)
             dbg = getattr(expected, "debug", {}) or {}
-            needs_followup = bool(dbg.get("requires_followup", False))
+            needs_followup = bool(dbg.get("followup_required", dbg.get("requires_followup", False)))
 
-            if kind == "OR_SB" and needs_followup:
+            if needs_followup:
                 if not bool(getattr(res, "show_followup_buttons", False)):
                     raise RuntimeError(
                         f"expected followup start, got show_followup_buttons={res.show_followup_buttons}"
                     )
 
-                expected_max = dbg.get("followup_expected_max_bb")
-                if not isinstance(expected_max, (int, float)):
-                    raise RuntimeError(f"invalid followup_expected_max_bb={expected_max!r}")
-
-                followup_res = engine.submit(str(float(expected_max)))
-                if not bool(getattr(followup_res, "is_correct", False)):
-                    raise RuntimeError(f"followup incorrect text={followup_res.text!r}")
-
-                followup_count += 1
+                expected_followup_action = str(dbg.get("followup_expected_action") or "").strip().upper()
+                if expected_followup_action:
+                    followup_res = engine.submit(expected_followup_action)
+                    if not bool(getattr(followup_res, "is_correct", False)):
+                        raise RuntimeError(f"followup incorrect text={followup_res.text!r}")
+                    if kind == "3BET":
+                        followup_count_3bet += 1
+                else:
+                    expected_max = dbg.get("followup_expected_max_bb")
+                    if not isinstance(expected_max, (int, float)):
+                        raise RuntimeError(f"invalid followup_expected_max_bb={expected_max!r}")
+                    followup_res = engine.submit(str(float(expected_max)))
+                    if not bool(getattr(followup_res, "is_correct", False)):
+                        raise RuntimeError(f"followup incorrect text={followup_res.text!r}")
+                    if kind == "OR_SB":
+                        followup_count += 1
             else:
                 if not bool(getattr(res, "is_correct", False)):
                     raise RuntimeError(f"first-stage incorrect text={res.text!r}")
@@ -152,7 +160,7 @@ def run_smoke(iterations: int = 200, seed: int = 20260213, verbose: bool = True)
                     break
                 expected = _judge_expected("OR_SB", judge, ctx)
                 dbg = getattr(expected, "debug", {}) or {}
-                if not bool(dbg.get("requires_followup", False)):
+                if not bool(dbg.get("followup_required", dbg.get("requires_followup", False))):
                     continue
                 followup_probe_hits += 1
                 expected_action = str(expected.action).strip().upper()
@@ -178,7 +186,7 @@ def run_smoke(iterations: int = 200, seed: int = 20260213, verbose: bool = True)
         print(
             f"smoke_runtime summary: iterations={iterations} seed={seed} "
             f"OR={counts['OR']} OR_SB={counts['OR_SB']} 3BET={counts['3BET']} ROL={counts['ROL']} "
-            f"OR_SB_followups={followup_count}"
+            f"OR_SB_followups={followup_count} 3BET_followups={followup_count_3bet}"
         )
         if followup_probe_hits == 0 and followup_count == 0:
             print("note: no OR_SB follow-up tags observed in deterministic sample")

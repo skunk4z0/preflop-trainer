@@ -5,7 +5,14 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from .models import Difficulty, ProblemType, OpenRaiseProblemContext, SBLimpFollowUpContext
+from .models import (
+    Action,
+    ActionFollowUpContext,
+    Difficulty,
+    OpenRaiseProblemContext,
+    ProblemType,
+    SBLimpFollowUpContext,
+)
 
 logger = logging.getLogger("poker_trainer.core.engine")
 
@@ -23,7 +30,7 @@ class SubmitResult:
     hide_followup_buttons: bool
     judge_result: Optional[Any] = None  # レンジ表ポップアップ等に使う
 
-    followup_choices: Optional[list[float]] = None
+    followup_choices: Optional[list[str | float]] = None
     followup_prompt: Optional[str] = None
 
 
@@ -42,7 +49,7 @@ class PokerEngine:
         self.difficulty: Optional[Difficulty] = None
         self.current_problem: Optional[ProblemType] = None
         self.context: Optional[OpenRaiseProblemContext] = None
-        self.followup: Optional[SBLimpFollowUpContext] = None
+        self.followup: Optional[SBLimpFollowUpContext | ActionFollowUpContext] = None
         # ★重要：follow-up不正解でもレンジ表を出すため、直前の1段目結果を保持
         self._last_judge_result: Optional[Any] = None
 
@@ -107,44 +114,81 @@ class PokerEngine:
         # followup採点（2段目）
         # -------------------------
         if self.followup is not None:
+            if isinstance(self.followup, SBLimpFollowUpContext):
+                self._log(
+                    f"[ENGINE] followup-phase ENTER expected={self.followup.expected_max_bb} "
+                    f"tag={self.followup.source_tag} action={user_action!r}"
+                )
+
+                try:
+                    chosen = float(ua_raw)
+                except ValueError:
+                    self._log(f"[ENGINE] followup-phase PARSE_FAIL ua_raw={ua_raw!r}")
+
+                    # follow-up中に数値でない入力が来た場合も、choices/promptを返す（UI安定化）
+                    return SubmitResult(
+                        text=f"数値を選択してください（2 / 2.25 / 2.5 / 3）。入力={ua_raw}",
+                        is_correct=None,
+                        show_next_button=False,
+                        show_followup_buttons=True,
+                        hide_followup_buttons=False,
+                        judge_result=self._last_judge_result,
+                        followup_choices=[2, 2.25, 2.5, 3],
+                        followup_prompt="追加問題：BBのオープンに対して、何BBまでコールしますか？",
+                    )
+
+                expected = self.followup.expected_max_bb
+                ok = (abs(chosen - expected) < 1e-9)
+                src = self.followup.source_tag
+
+                self._log(f"[ENGINE] followup-phase GRADE chosen={chosen} expected={expected} ok={ok}")
+
+                # follow-upは回答を受けたら必ず終了（正誤に関係なく）
+                self.followup = None
+
+                msg = (
+                    f"正解：{expected}BBまでコール（元タグ: {src}）"
+                    if ok
+                    else f"不正解：正解は {expected}BB（あなた={chosen}BB、元タグ: {src}）"
+                )
+
+                # ★follow-upでも1段目のjudge_resultを返す（レンジ表ポップアップ用）
+                return SubmitResult(
+                    text=msg,
+                    is_correct=ok,
+                    show_next_button=True,
+                    show_followup_buttons=False,
+                    hide_followup_buttons=True,
+                    judge_result=self._last_judge_result,
+                )
+
             self._log(
-                f"[ENGINE] followup-phase ENTER expected={self.followup.expected_max_bb} "
+                f"[ENGINE] followup-phase ENTER expected={self.followup.expected_action.value} "
                 f"tag={self.followup.source_tag} action={user_action!r}"
             )
 
-            try:
-                chosen = float(ua_raw)
-            except ValueError:
-                self._log(f"[ENGINE] followup-phase PARSE_FAIL ua_raw={ua_raw!r}")
-
-                # follow-up中に数値でない入力が来た場合も、choices/promptを返す（UI安定化）
+            if ua_raw not in {"FOLD", "CALL", "RAISE"}:
                 return SubmitResult(
-                    text=f"数値を選択してください（2 / 2.25 / 2.5 / 3）。入力={ua_raw}",
+                    text=f"アクションを選択してください（FOLD / CALL / RAISE）。入力={ua_raw}",
                     is_correct=None,
                     show_next_button=False,
                     show_followup_buttons=True,
                     hide_followup_buttons=False,
                     judge_result=self._last_judge_result,
-                    followup_choices=[2, 2.25, 2.5, 3],
-                    followup_prompt="追加問題：BBのオープンに対して、何BBまでコールしますか？",
+                    followup_choices=["FOLD", "CALL", "RAISE"],
+                    followup_prompt="追加問題：4BETに対するアクションは？",
                 )
 
-            expected = self.followup.expected_max_bb
-            ok = (abs(chosen - expected) < 1e-9)
+            expected_action = self.followup.expected_action.value
+            ok = (ua_raw == expected_action)
             src = self.followup.source_tag
-
-            self._log(f"[ENGINE] followup-phase GRADE chosen={chosen} expected={expected} ok={ok}")
-
-            # follow-upは回答を受けたら必ず終了（正誤に関係なく）
             self.followup = None
 
             msg = (
-                f"正解：{expected}BBまでコール（元タグ: {src}）"
+                f"正解：4BETに対して {expected_action}（元タグ: {src}）"
                 if ok
-                else f"不正解：正解は {expected}BB（あなた={chosen}BB、元タグ: {src}）"
+                else f"不正解：正解は {expected_action}（あなた={ua_raw}、元タグ: {src}）"
             )
-
-            # ★follow-upでも1段目のjudge_resultを返す（レンジ表ポップアップ用）
             return SubmitResult(
                 text=msg,
                 is_correct=ok,
@@ -286,14 +330,18 @@ class PokerEngine:
         # -------------------------
         requires_followup = False
         expected_max = None
+        expected_followup_action = ""
         source_tag = ""
         if isinstance(dbg, dict):
-            requires_followup = bool(dbg.get("requires_followup", False))
+            requires_followup = bool(
+                dbg.get("followup_required", dbg.get("requires_followup", False))
+            )
             expected_max = dbg.get("followup_expected_max_bb")
+            expected_followup_action = str(dbg.get("followup_expected_action") or "").strip().upper()
             source_tag = str(dbg.get("detail_tag") or dbg.get("tag_upper") or "")
 
-        if self.current_problem == ProblemType.JUEGO_OR_SB and is_correct and requires_followup:
-            if isinstance(expected_max, (int, float)):
+        if is_correct and requires_followup:
+            if self.current_problem == ProblemType.JUEGO_OR_SB and isinstance(expected_max, (int, float)):
                 self.followup = SBLimpFollowUpContext(
                     hand_key=ctx.excel_hand_key,
                     expected_max_bb=float(expected_max),
@@ -312,6 +360,22 @@ class PokerEngine:
                     followup_choices=[2, 2.25, 2.5, 3],
                     followup_prompt="追加問題：BBのオープンに対して、何BBまでコールしますか？",
                 )
+            if self.current_problem == ProblemType.JUEGO_3BET and expected_followup_action in {"FOLD", "CALL", "RAISE"}:
+                self.followup = ActionFollowUpContext(
+                    hand_key=ctx.excel_hand_key,
+                    expected_action=Action(expected_followup_action),
+                    source_tag=source_tag,
+                )
+                return SubmitResult(
+                    text="正解（3BET）。追加問題：4BETに対するアクションは？",
+                    is_correct=None,
+                    show_next_button=False,
+                    show_followup_buttons=True,
+                    hide_followup_buttons=False,
+                    judge_result=result,
+                    followup_choices=["FOLD", "CALL", "RAISE"],
+                    followup_prompt="追加問題：4BETに対するアクションは？",
+                )
 
         # ★ここから追加：follow-up に入らない「通常採点」の最終 return
         msg = "正解！" if is_correct else f"不正解… {reason}"
@@ -324,5 +388,3 @@ class PokerEngine:
             hide_followup_buttons=True,   # follow-up UI 残骸があれば消す
             judge_result=result,          # 不正解時にレンジ表示したいならこれを使う
         )
-
-
