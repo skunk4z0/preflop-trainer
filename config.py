@@ -10,8 +10,6 @@ DATA_DIR = (BASE_DIR / "data").resolve()
 JSON_PATH = (DATA_DIR / "datasheet_ranges.json").resolve()
 FINAL_TAGS_JSON_PATH = (DATA_DIR / "final_tags.json").resolve()
 
-
-
 """
 Poker Trainer / JUEGO 設定
 
@@ -46,13 +44,11 @@ AA_SEARCH_RANGES = {
 # =========================
 GRID_TOPLEFT_OFFSET = (0, 0)
 
-
 # REF_COLOR_CELLS 運用ルール:
 # - 基本はRGB直書き: "f4cccc" / "#f4cccc" / "FFf4cccc"（最終的に6桁RGBへ正規化される）
 # - 例外としてセル番地(A1)も許可: "D144" など（黒/テーマ色などExcel依存の回避用）
 # - ビルド時に get_ref_colors() が正規化・検証し、読めない場合は例外で停止する（静かに壊さない）
 # - 黒("000000")も有効色として扱う（無色扱いしない）
-
 
 REF_COLOR_CELLS = {
     # ========= OR =========
@@ -112,7 +108,6 @@ REF_COLOR_CELLS = {
         "4BET_VS_5BET_CALL": "660000",
         "4BET_VS_5BET_FOLD": "cc0000",
 
-        # 旧: AIvs12bbs/4Bet_C(IP) / AIvs13.5bbs/4Bet_C(IP)
         # NOTE: ここは “IP/OOP の分岐” を後で入れる（色は同じでも意味が変わり得る）
         "SHOVE_VS_3BET_GE_12BB_IP":   "000000",
         "SHOVE_VS_3BET_GE_13_5BB_IP": "000000",
@@ -130,7 +125,6 @@ REF_COLOR_CELLS = {
     },
 
     # ========= CC_3BET_MULTI =========
-    # 旧configは同一キーの重複で壊れてた（最後の1個しか残らない）ので修正
     "CC_3BET_MULTI": {
         "3BET_VS_4BET_SHOVE": "660000",
         "3BET_VS_4BET_FOLD":  "cc0000",

@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from .followup_policy import FOLLOWUP_CHOICES, FOLLOWUP_PROMPT, maybe_create_followup
 from .models import Difficulty, ProblemType, OpenRaiseProblemContext, SBLimpFollowUpContext
 
 logger = logging.getLogger("poker_trainer.core.engine")
@@ -42,23 +43,21 @@ class PokerEngine:
         self.difficulty: Optional[Difficulty] = None
         self.current_problem: Optional[ProblemType] = None
         self.context: Optional[OpenRaiseProblemContext] = None
+
+        # follow-up（OR_SBのLIMP_CALLの2段目）
         self.followup: Optional[SBLimpFollowUpContext] = None
-        # ★重要：follow-up不正解でもレンジ表を出すため、直前の1段目結果を保持
+
+        # follow-up不正解時にレンジ表を出す用
         self._last_judge_result: Optional[Any] = None
 
     def _log(self, msg: str) -> None:
         if self.enable_debug:
-            logger.debug(msg)
+            logger.info(msg)
 
-    def reset_state(self) -> None:
-        self.difficulty = None
-        self.current_problem = None
-        self.context = None
-        self.followup = None
-        self._last_judge_result = None
-
+    # -------------------------
+    # Start / Reset
+    # -------------------------
     def start_yokosawa_open(self) -> None:
-        self.difficulty = None
         self.current_problem = ProblemType.YOKOSAWA_OPEN
         self.context = None
         self.followup = None
@@ -71,23 +70,44 @@ class PokerEngine:
         self.followup = None
         self._last_judge_result = None
 
-    def new_question(self):
-        """
-        generator.generate(difficulty) を呼び、engine state に反映。
-        返り値は generator の generated オブジェクトをそのまま返す（互換維持）。
-        """
-        # 次問開始時は follow-up / 直前結果を必ずクリア
+    def reset_state(self) -> None:
+        self.difficulty = None
+        self.current_problem = None
+        self.context = None
         self.followup = None
         self._last_judge_result = None
 
+    # -------------------------
+    # Next question
+    # -------------------------
+    def new_question(self) -> SubmitResult:
         if self.difficulty is None:
-            raise ValueError("difficulty is not set")
+            return SubmitResult(
+                text="難易度を選択してください（初級/中級/上級）",
+                is_correct=None,
+                show_next_button=False,
+                show_followup_buttons=False,
+                hide_followup_buttons=False,
+                judge_result=None,
+            )
 
-        generated = self.generator.generate(self.difficulty)
-        self.current_problem = generated.problem_type
-        self.context = generated.ctx
-        return generated
+        q = self.generator.next_question(self.difficulty)
+        self.current_problem = q.problem_type
+        self.context = q.ctx
+        self.followup = None
 
+        return SubmitResult(
+            text=q.header_text,
+            is_correct=None,
+            show_next_button=False,
+            show_followup_buttons=False,
+            hide_followup_buttons=True,
+            judge_result=None,
+        )
+
+    # -------------------------
+    # Submit
+    # -------------------------
     def submit(self, user_action: Optional[str]) -> SubmitResult:
         if user_action is None:
             return SubmitResult(
@@ -99,7 +119,6 @@ class PokerEngine:
                 judge_result=None,
             )
 
-        # float等が来ても落ちないように str 化
         ua_raw = str(user_action).strip().upper()
         self._log(f"[ENGINE] submit qtype={self.current_problem} followup={'Y' if self.followup else 'N'} action={user_action!r}")
 
@@ -116,8 +135,6 @@ class PokerEngine:
                 chosen = float(ua_raw)
             except ValueError:
                 self._log(f"[ENGINE] followup-phase PARSE_FAIL ua_raw={ua_raw!r}")
-
-                # follow-up中に数値でない入力が来た場合も、choices/promptを返す（UI安定化）
                 return SubmitResult(
                     text=f"数値を選択してください（2 / 2.25 / 2.5 / 3）。入力={ua_raw}",
                     is_correct=None,
@@ -125,8 +142,8 @@ class PokerEngine:
                     show_followup_buttons=True,
                     hide_followup_buttons=False,
                     judge_result=self._last_judge_result,
-                    followup_choices=[2, 2.25, 2.5, 3],
-                    followup_prompt="追加問題：BBのオープンに対して、何BBまでコールしますか？",
+                    followup_choices=FOLLOWUP_CHOICES,
+                    followup_prompt=FOLLOWUP_PROMPT,
                 )
 
             expected = self.followup.expected_max_bb
@@ -135,7 +152,6 @@ class PokerEngine:
 
             self._log(f"[ENGINE] followup-phase GRADE chosen={chosen} expected={expected} ok={ok}")
 
-            # follow-upは回答を受けたら必ず終了（正誤に関係なく）
             self.followup = None
 
             msg = (
@@ -144,7 +160,6 @@ class PokerEngine:
                 else f"不正解：正解は {expected}BB（あなた={chosen}BB、元タグ: {src}）"
             )
 
-            # ★follow-upでも1段目のjudge_resultを返す（レンジ表ポップアップ用）
             return SubmitResult(
                 text=msg,
                 is_correct=ok,
@@ -153,7 +168,6 @@ class PokerEngine:
                 hide_followup_buttons=True,
                 judge_result=self._last_judge_result,
             )
-
 
         # -------------------------
         # 通常採点（1段目）
@@ -178,13 +192,12 @@ class PokerEngine:
                 judge_result=None,
             )
 
-        # 許可アクション（問題種別で切替）
         if self.current_problem == ProblemType.JUEGO_ROL:
             allowed = {"FOLD", "RAISE", "CALL", "CHECK", "LIMP_CALL"}  # 互換
         elif self.current_problem == ProblemType.JUEGO_3BET:
-            allowed = {"FOLD", "RAISE", "CALL"}   # ★追加    
+            allowed = {"FOLD", "RAISE", "CALL"}
         else:
-            allowed = {"FOLD", "RAISE", "LIMP_CALL"}    
+            allowed = {"FOLD", "RAISE", "LIMP_CALL"}
 
         if ua_raw not in allowed:
             return SubmitResult(
@@ -196,7 +209,6 @@ class PokerEngine:
                 judge_result=None,
             )
 
-        # ROL互換：LIMP_CALL を CALL と同義に扱う
         ua = "CALL" if (self.current_problem == ProblemType.JUEGO_ROL and ua_raw == "LIMP_CALL") else ua_raw
 
         ctx = self.context
@@ -226,7 +238,6 @@ class PokerEngine:
                     user_action=ua,
                     loose=ctx.loose_player_exists,
                 )
-
 
             elif self.current_problem == ProblemType.JUEGO_ROL:
                 if not hasattr(self.juego_judge, "judge_rol"):
@@ -267,7 +278,6 @@ class PokerEngine:
                 judge_result=None,
             )
 
-        # ★保持（follow-up不正解でレンジ表表示するため）
         self._last_judge_result = result
 
         is_correct = bool(getattr(result, "correct", False))
@@ -280,39 +290,40 @@ class PokerEngine:
             self._log("===================")
 
         # -------------------------
-        # OR_SB かつ LimpCx 正解なら follow-up へ
+        # follow-up 開始判定（policy集約）
         # -------------------------
-        tag = ""
+        tag_upper = ""
+        expected_action = ""
         if isinstance(dbg, dict):
-            for k in ("tag_upper", "detail_tag", "tag", "expected_tag"):
-                v = dbg.get(k)
-                if v:
-                    tag = str(v)
-                    break
+            tag_upper = str(dbg.get("tag_upper") or "")
+            expected_action = str(dbg.get("expected_action") or dbg.get("correct_action") or "")
 
-        if self.current_problem == ProblemType.JUEGO_OR_SB and is_correct:
-            expected_max = self._parse_limp_tag_to_max_bb(tag)
-            if expected_max is not None:
-                self.followup = SBLimpFollowUpContext(
-                    hand_key=ctx.excel_hand_key,
-                    expected_max_bb=expected_max,
-                    source_tag=tag,
-                )
-                return SubmitResult(
-                    text=(
-                        "正解（リンプイン）。追加問題：\n"
-                        "BBのオープンに対して、何BBまでコールしますか？"
-                    ),
-                    is_correct=None,
-                    show_next_button=False,
-                    show_followup_buttons=True,
-                    hide_followup_buttons=False,
-                    judge_result=result,
-                    followup_choices=[2, 2.25, 2.5, 3],
-                    followup_prompt="追加問題：BBのオープンに対して、何BBまでコールしますか？",
-                )
+        followup_ctx = maybe_create_followup(
+            problem_kind=self.current_problem,
+            tag_upper=tag_upper,
+            expected_action=expected_action,
+            stage1_correct=is_correct,
+        )
+        if followup_ctx is not None:
+            self.followup = SBLimpFollowUpContext(
+                hand_key=ctx.excel_hand_key,
+                expected_max_bb=followup_ctx.expected_max_bb,
+                source_tag=followup_ctx.source_tag,
+            )
+            return SubmitResult(
+                text=(
+                    "正解（リンプイン）。追加問題：\n"
+                    "BBのオープンに対して、何BBまでコールしますか？"
+                ),
+                is_correct=None,
+                show_next_button=False,
+                show_followup_buttons=True,
+                hide_followup_buttons=False,
+                judge_result=result,
+                followup_choices=FOLLOWUP_CHOICES,
+                followup_prompt=FOLLOWUP_PROMPT,
+            )
 
-        # ★ここから追加：follow-up に入らない「通常採点」の最終 return
         msg = "正解！" if is_correct else f"不正解… {reason}"
 
         return SubmitResult(
@@ -320,25 +331,7 @@ class PokerEngine:
             is_correct=is_correct,
             show_next_button=True,
             show_followup_buttons=False,
-            hide_followup_buttons=True,   # follow-up UI 残骸があれば消す
-            judge_result=result,          # 不正解時にレンジ表示したいならこれを使う
+            hide_followup_buttons=True,
+            judge_result=result,
         )
 
-
-
-    @staticmethod
-    def _parse_limp_tag_to_max_bb(tag: str) -> Optional[float]:
-        if not tag:
-            return None
-        t = str(tag).strip()
-        if not t.upper().startswith("LIMPCX"):
-            return None
-
-        body = t[len("LimpCx"):].strip()
-        if body.lower().endswith("o"):
-            body = body[:-1]
-
-        try:
-            return float(body)
-        except (ValueError, TypeError):
-            return None

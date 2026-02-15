@@ -9,13 +9,14 @@ class FakeGenerator:
     def __init__(self, problem_type):
         self.problem_type = problem_type
 
-    def generate(self, difficulty):
+    def next_question(self, difficulty):
+        position = "CO" if self.problem_type == ProblemType.JUEGO_3BET else "SB"
         ctx = OpenRaiseProblemContext(
             hole_cards=("As", "Kd"),
-            position="SB",
+            position=position,
             open_size_bb=2.5,
             excel_hand_key="AKo",
-            excel_position_key="SB",
+            excel_position_key=position,
             loose_player_exists=False,
         )
         return SimpleNamespace(problem_type=self.problem_type, ctx=ctx, answer_mode="OR", header_text="test")
@@ -24,11 +25,15 @@ class FakeGenerator:
 class FakeJudge:
     def judge_or_sb(self, position, hand, user_action, loose):
         # LimpCx2.5o を正解扱いにする
-        dbg = {"tag_upper": "LIMPCX2.5O"}
+        dbg = {"tag_upper": "LIMPCX2.5O", "expected_action": "LIMP_CALL"}
         return SimpleNamespace(correct=True, reason="ok", debug=dbg)
 
     def judge_or(self, position, hand, user_action, loose):
-        dbg = {"tag_upper": "FOLD"}
+        dbg = {"tag_upper": "FOLD", "expected_action": "FOLD"}
+        return SimpleNamespace(correct=True, reason="ok", debug=dbg)
+
+    def judge_3bet(self, position, hand, user_action, loose):
+        dbg = {"tag_upper": "CALL_VS_OPEN_LE_3X", "expected_action": "CALL"}
         return SimpleNamespace(correct=True, reason="ok", debug=dbg)
 
 
@@ -51,6 +56,17 @@ class EngineFollowupTest(unittest.TestCase):
 
         res = eng.submit("RAISE")
         self.assertFalse(res.show_followup_buttons)
+
+    def test_followup_enters_on_cc_3bet_call_vs_open_le(self):
+        gen = FakeGenerator(ProblemType.JUEGO_3BET)
+        eng = PokerEngine(generator=gen, juego_judge=FakeJudge(), enable_debug=True)
+        eng.start_juego(Difficulty.BEGINNER)
+        eng.new_question()
+
+        res = eng.submit("CALL")
+        self.assertTrue(res.show_followup_buttons)
+        self.assertIsNotNone(eng.followup)
+        self.assertEqual(eng.followup.expected_max_bb, 3.0)
 
 
 if __name__ == "__main__":

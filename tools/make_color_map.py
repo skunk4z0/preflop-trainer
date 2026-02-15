@@ -1,148 +1,151 @@
 from __future__ import annotations
 
+import argparse
 import json
-import re
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, Optional
 
-import openpyxl
-from openpyxl.worksheet.worksheet import Worksheet
-
-# --- debug: config import & REF_COLOR_CELLS ---
-import sys
-ROOT = Path(__file__).resolve().parents[1]  # C:\MyPokerApp
-sys.path.insert(0, str(ROOT))
-
-from config import REF_COLOR_CELLS  # ← これが使える前提にする（try/exceptは消す）
+from config import FINAL_TAGS_JSON_PATH
 
 
+def _default_pack_path() -> Path:
+    # final_tags.json と同じ場所に ranges_pack.json がある前提
+    return Path(FINAL_TAGS_JSON_PATH).with_name("ranges_pack.json")
 
 
-# =========================
-# Inputs / Outputs
-# =========================
-# ここはあなたの環境に合わせて修正
-XLSX_PATH = r"C:\Users\user\Desktop\PREFLOP_GAME_FOR_BEGINNERS-INTERMEDIATEコピー.xlsx"
-SHEET_NAME = "zeros_range"  # ←実際のシート名に変える
-
-OUT_DIR = Path(r"C:\MyPokerApp\tools\out")
-OUT_JSON = OUT_DIR / "ref_colors_rgb.json"
-
-# =========================
-# Legend cell mapping
-# =========================
-# 本来は config.py にあるはず。あるなら import で持ってくるのが正しい。
-# 例: from config import REF_COLOR_CELLS
-try:
-    from config import REF_COLOR_CELLS  # type: ignore
-except Exception:
-    # config から取れないなら、ここに暫定で最小例を置く（あなたの実物に置換すること）
-    REF_COLOR_CELLS: Dict[str, Dict[str, str]] = {
-        # "OR": {"RAISE_3BB": "D144", ...},
-    }
+def _load_pack(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"ranges_pack.json not found: {path}\n"
+            "Build it first:\n"
+            "  .\\.venv-build\\Scripts\\python -m tools.build_final_tags_json"
+        )
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(obj, dict):
+        raise ValueError("ranges_pack.json must be a JSON object")
+    return obj
 
 
-# =========================
-# Helpers
-# =========================
-_RGB6 = re.compile(r"^[0-9A-Fa-f]{6}$")
+def _get_legend(pack: Dict[str, Any], kind: str) -> Dict[str, Optional[str]]:
+    legend_by_kind = pack.get("legend_by_kind")
+    if not isinstance(legend_by_kind, dict):
+        raise ValueError("ranges_pack.json missing 'legend_by_kind'")
+
+    k = (kind or "").strip().upper()
+    if not k:
+        raise ValueError("kind is required")
+
+    legend = legend_by_kind.get(k)
+    if not isinstance(legend, dict):
+        # kind一覧を出してわかりやすく落とす
+        kinds = sorted([str(x) for x in legend_by_kind.keys()])
+        raise KeyError(f"kind not found: {k}. Available: {kinds}")
+
+    out: Dict[str, Optional[str]] = {}
+    for tag, rgb in legend.items():
+        t = str(tag).strip()
+        if rgb is None:
+            out[t] = None
+        else:
+            s = str(rgb).strip().lstrip("#").upper()
+            # 念のため ARGB も吸収
+            if len(s) == 8:
+                s = s[-6:]
+            out[t] = s
+    return out
 
 
-def _is_rgb_literal(s: str) -> bool:
-    s = (s or "").strip()
-    return bool(_RGB6.match(s))
+def _format_json(legend: Dict[str, Optional[str]]) -> str:
+    # tag名ソートで安定出力
+    ordered = {k: legend[k] for k in sorted(legend.keys())}
+    return json.dumps(ordered, ensure_ascii=False, indent=2)
 
 
-def _read_fill_rgb(ws: Worksheet, a1: str) -> Optional[str]:
-    """
-    セルの fill.fgColor から RGB(6桁) を返す。
-    取得できない/無効なら None。
-    """
-    cell = ws[a1]
-    fill = cell.fill
-
-    if fill is None or fill.patternType in (None, "none"):
-        return None
-
-    fg = getattr(fill, "fgColor", None)
-    if fg is None:
-        return None
-
-    # openpyxl は rgb が ARGB("FF112233") で来ることが多い
-    if getattr(fg, "type", None) == "rgb" and getattr(fg, "rgb", None):
-        argb = str(fg.rgb).upper()
-        rgb = argb[-6:]  # ARGB -> RGB
-    else:
-        # theme / indexed / auto はここでは解決しない（凡例生成ならスキップでOK）
-        return None
-
-    # “偽黒” を無効扱い（必要ならここは条件を調整）
-    if rgb == "000000":
-        return None
-
-    return rgb
+def _format_csv(legend: Dict[str, Optional[str]]) -> str:
+    lines = ["tag,rgb"]
+    for tag in sorted(legend.keys()):
+        rgb = legend[tag] or ""
+        lines.append(f"{tag},{rgb}")
+    return "\n".join(lines) + "\n"
 
 
-# =========================
-# Main
-# =========================
+def _format_md(legend: Dict[str, Optional[str]]) -> str:
+    lines = ["| tag | rgb |", "|---|---|"]
+    for tag in sorted(legend.keys()):
+        rgb = legend[tag]
+        lines.append(f"| {tag} | {rgb or ''} |")
+    return "\n".join(lines) + "\n"
+
+
+def _write_or_print(text: str, out_path: Optional[Path]) -> None:
+    if out_path is None:
+        print(text)
+        return
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(text, encoding="utf-8")
+    print(f"OK: wrote {out_path}")
+
+
 def main() -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    wb = openpyxl.load_workbook(XLSX_PATH, data_only=True)
-
-    ws_legend = wb["zeros_range"]   # REF_COLOR_CELLS の色凡例はここ
-    ws_data   = wb["Datasheet"]     # AA_SEARCH_RANGES の探索はここ（このツールで使うなら）
-
-    if SHEET_NAME not in wb.sheetnames:
-        raise ValueError(f"Sheet '{SHEET_NAME}' not found. sheets={wb.sheetnames}")
-
-    ws = wb["zeros_range"]
-
-    ref_colors_rgb: Dict[str, Dict[str, str]] = {}
-    rows: List[Dict[str, str]] = []
-
-    # 衝突検出用：rgb -> [(kind, raw_label), ...]
-    rgb_to_labels: Dict[str, List[Tuple[str, str]]] = {}
-
-    for kind, mapping in REF_COLOR_CELLS.items():
-        kind_u = (kind or "").strip()
-        out: Dict[str, str] = {}
-
-        for raw_label, v in mapping.items():
-            raw = (raw_label or "").strip()
-            val = str(v).strip()
-
-            if _is_rgb_literal(val):
-                rgb = val.upper()
-                source = "rgb_literal"
-            else:
-                # 値が空のセルは凡例として扱わない（装飾だけ残ってるノイズ回避）
-                cell = ws[val]
-                if cell.value is None or str(cell.value).strip() == "":
-                    continue
-
-                rgb = _read_fill_rgb(ws_legend, val)
-                if rgb is None:
-                    continue
-                source = val  # A1番地を記録
-
-            out[raw] = rgb
-            rows.append({"kind": kind_u, "raw_label": raw, "rgb": rgb, "source": source})
-            rgb_to_labels.setdefault(rgb, []).append((kind_u, raw))
-
-        ref_colors_rgb[kind_u] = out
-
-    print(
-        f"[make_color_map] kinds={len(ref_colors_rgb)} rows={len(rows)} "
-        f"unique_rgb={len(rgb_to_labels)}"
+    ap = argparse.ArgumentParser(
+        description="Dump legend(tag->rgb) from data/ranges_pack.json (no Excel)."
     )
-
-    OUT_JSON.write_text(
-        json.dumps(ref_colors_rgb, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    ap.add_argument("--kind", help="Kind name (e.g., OR, OR_SB, ROL, CC_3BET).")
+    ap.add_argument(
+        "--pack",
+        help="Path to ranges_pack.json (default: sibling of FINAL_TAGS_JSON_PATH).",
+        default=None,
     )
-    print(f"[make_color_map] wrote: {OUT_JSON}")
+    ap.add_argument(
+        "--format",
+        choices=["json", "csv", "md"],
+        default="json",
+        help="Output format.",
+    )
+    ap.add_argument(
+        "--out",
+        help="Output file path (omit to print to stdout).",
+        default=None,
+    )
+    ap.add_argument(
+        "--list-kinds",
+        action="store_true",
+        help="List available kinds and exit.",
+    )
+    args = ap.parse_args()
+
+    pack_path = Path(args.pack) if args.pack else _default_pack_path()
+    pack = _load_pack(pack_path)
+
+    legend_by_kind = pack.get("legend_by_kind")
+    if not isinstance(legend_by_kind, dict):
+        raise ValueError("ranges_pack.json missing 'legend_by_kind'")
+
+    if args.list_kinds:
+        kinds = sorted([str(k) for k in legend_by_kind.keys()])
+        print("\n".join(kinds))
+        return
+
+    if not args.kind:
+        kinds = sorted([str(k) for k in legend_by_kind.keys()])
+        raise SystemExit(
+            "ERROR: --kind is required.\n"
+            f"Available kinds: {kinds}\n"
+            "Example:\n"
+            "  python -m tools.make_color_map --kind OR --format md"
+        )
+
+    legend = _get_legend(pack, args.kind)
+
+    if args.format == "json":
+        text = _format_json(legend)
+    elif args.format == "csv":
+        text = _format_csv(legend)
+    else:
+        text = _format_md(legend)
+
+    out_path = Path(args.out) if args.out else None
+    _write_or_print(text, out_path)
 
 
 if __name__ == "__main__":

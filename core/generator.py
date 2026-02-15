@@ -10,8 +10,9 @@ from .models import Difficulty, GeneratedQuestion, OpenRaiseProblemContext, Prob
 
 class JuegoProblemGenerator:
     """
-    controller.py から「デッキ」「プール」「問題生成」「表示用文言/モード決定」を移植する。
-    UI 依存は禁止（Tkinterを知らない）。
+    controller.py から「デッキ」「問題生成」「表示用文言/モード決定」を移植したもの。
+    - UI 依存は禁止（Tkinter を知らない）
+    - Repo 依存も持たない（positions など必要情報は init で注入）
     """
 
     def __init__(
@@ -25,12 +26,12 @@ class JuegoProblemGenerator:
         ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
         self._deck = [r + s for r, s in itertools.product(ranks, suits)]
 
+        # main.py で repo.list_positions("CC_3BET") を渡す想定（=最終JSONのposキー）
         self._positions_3bet = positions_3bet or []
 
         self._pool_beginner = [ProblemType.JUEGO_OR]
         self._pool_intermediate = [ProblemType.JUEGO_OR_SB, ProblemType.JUEGO_3BET]
         self._pool_advanced = [ProblemType.JUEGO_ROL]
-
 
     # -------------------------
     # Public
@@ -40,7 +41,18 @@ class JuegoProblemGenerator:
         ctx = self._generate_context(problem_type)
         answer_mode = self._answer_mode(problem_type, ctx)
         header_text = self._header_text(problem_type, ctx)
-        return GeneratedQuestion(problem_type=problem_type, ctx=ctx, answer_mode=answer_mode, header_text=header_text)
+        return GeneratedQuestion(
+            problem_type=problem_type,
+            ctx=ctx,
+            answer_mode=answer_mode,
+            header_text=header_text,
+        )
+
+        
+    # 互換：旧Engineが next_question(difficulty) を呼ぶ前提のため残す
+    def next_question(self, difficulty: Difficulty) -> GeneratedQuestion:
+        return self.generate(difficulty)
+
 
     # -------------------------
     # Internal
@@ -67,7 +79,7 @@ class JuegoProblemGenerator:
         if problem_type == ProblemType.JUEGO_3BET:
             return self._generate_3bet_problem()
 
-
+        # 想定外の fallback（安全に空コンテキスト）
         card1, card2 = self._rng.sample(self._deck, 2)
         hand_key = self.to_hand_key(card1, card2)
         return OpenRaiseProblemContext(
@@ -116,8 +128,8 @@ class JuegoProblemGenerator:
         card1, card2 = self._rng.sample(self._deck, 2)
         hand_key = self.to_hand_key(card1, card2)
 
-        # Excelのpos文字列に合わせる：repo.list_positions("3BET") から注入する想定
-        pos = self._rng.choice(self._positions_3bet) if self._positions_3bet else "BB vs SB"
+        # 3BET系：repo.list_positions("CC_3BET") 等から注入される position を使う
+        pos = self._rng.choice(self._positions_3bet) if self._positions_3bet else "BB_VS_SB"
 
         return OpenRaiseProblemContext(
             hole_cards=(card1, card2),
@@ -128,7 +140,6 @@ class JuegoProblemGenerator:
             excel_position_key=pos,
             limpers=0,
         )
-
 
     def _generate_rol_problem(self) -> OpenRaiseProblemContext:
         card1, card2 = self._rng.sample(self._deck, 2)
@@ -187,11 +198,9 @@ class JuegoProblemGenerator:
                 f"Raise={ctx.open_size_bb}BB"
                 f"{fish_msg}"
             )
+
         if problem_type == ProblemType.JUEGO_3BET:
-            return (
-                "【JUEGO 中級】3BET判断（簡易）｜"
-                f"Pos: {ctx.position}"
-            )    
+            return "【JUEGO 中級】3BET判断（簡易）｜" f"Pos: {ctx.position}"
 
         return "内部：未知の問題タイプです"
 
@@ -213,20 +222,3 @@ class JuegoProblemGenerator:
 
         suited = (s1 == s2)
         return r1 + r2 + ("s" if suited else "o")
-
-    @staticmethod
-    def parse_limp_tag_to_max_bb(tag: str) -> Optional[float]:
-        if not tag:
-            return None
-        t = str(tag).strip()
-        if not t.upper().startswith("LIMPCX"):
-            return None
-
-        body = t[len("LimpCx") :].strip()
-        if body.lower().endswith("o"):
-            body = body[:-1]
-
-        try:
-            return float(body)
-        except (ValueError, TypeError):
-            return None

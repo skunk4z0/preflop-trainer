@@ -14,7 +14,9 @@ logger = logging.getLogger("poker_trainer.ui")
 
 def _contrast_text_color(rgb: str) -> str:
     try:
-        r = int(rgb[0:2], 16); g = int(rgb[2:4], 16); b = int(rgb[4:6], 16)
+        r = int(rgb[0:2], 16)
+        g = int(rgb[2:4], 16)
+        b = int(rgb[4:6], 16)
         y = (r * 299 + g * 587 + b * 114) / 1000
         return "black" if y >= 150 else "white"
     except (ValueError, TypeError):
@@ -62,7 +64,9 @@ class PokerTrainerUI:
 
         self.btn_fold = tk.Button(self.ans_frame, text="FOLD", width=10, command=lambda: self.on_answer("FOLD"))
         self.btn_raise = tk.Button(self.ans_frame, text="RAISE", width=12, command=lambda: self.on_answer("RAISE"))
-        self.btn_limp_call = tk.Button(self.ans_frame, text="LIMP_CALL", width=12, command=lambda: self.on_answer("LIMP_CALL"))
+        self.btn_limp_call = tk.Button(
+            self.ans_frame, text="LIMP_CALL", width=12, command=lambda: self.on_answer("LIMP_CALL")
+        )
         self.btn_fold.pack(side=tk.LEFT, padx=5)
         self.btn_raise.pack(side=tk.LEFT, padx=5)
         self.btn_limp_call.pack(side=tk.LEFT, padx=5)
@@ -106,7 +110,7 @@ class PokerTrainerUI:
 
         # 初期表示はスタート画面（controller未接続でも動くUI状態にする）
         self._apply_start_screen_ui()
-        
+
     # -------------------------
     # 依存性注入（main.pyから呼ぶ）
     # -------------------------
@@ -192,7 +196,6 @@ class PokerTrainerUI:
     # Answer mode（Controller -> UI）
     # -------------------------
     def set_answer_mode(self, mode: str) -> None:
-        
         m = (mode or "").strip().upper()
 
         # まず必ず全ボタンを外す（前状態の影響を断つ）
@@ -202,7 +205,7 @@ class PokerTrainerUI:
         if m in ("OR", "OR_SB"):
             self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
             self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
-            self.btn_limp_call.config(text="LIMP/CALL", command=lambda: self.on_answer("LIMP_CALL"))
+            self.btn_limp_call.config(text="LIMP_CALL", command=lambda: self.on_answer("LIMP_CALL"))
 
             self.btn_fold.pack(side=tk.LEFT, padx=5)
             self.btn_raise.pack(side=tk.LEFT, padx=5)
@@ -270,13 +273,27 @@ class PokerTrainerUI:
     # Controller -> UI
     # -------------------------
     def lock_all_answer_buttons(self) -> None:
-        for b in (self.btn_fold, self.btn_raise, self.btn_limp_call,
-                  self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
+        for b in (
+            self.btn_fold,
+            self.btn_raise,
+            self.btn_limp_call,
+            self.btn_bb2,
+            self.btn_bb225,
+            self.btn_bb25,
+            self.btn_bb3,
+        ):
             self._tk_call("disable answer button", b.configure, state=tk.DISABLED)
 
     def unlock_all_answer_buttons(self) -> None:
-        for b in (self.btn_fold, self.btn_raise, self.btn_limp_call,
-                  self.btn_bb2, self.btn_bb225, self.btn_bb25, self.btn_bb3):
+        for b in (
+            self.btn_fold,
+            self.btn_raise,
+            self.btn_limp_call,
+            self.btn_bb2,
+            self.btn_bb225,
+            self.btn_bb25,
+            self.btn_bb3,
+        ):
             self._tk_call("enable answer button", b.configure, state=tk.NORMAL)
 
     def hide_next_button(self) -> None:
@@ -305,9 +322,8 @@ class PokerTrainerUI:
     def show_followup_size_buttons(self, choices=None, prompt: str | None = None) -> None:
         """
         follow-up の選択肢（例: [2, 2.25, 2.5, 3]）を受け取り、ボタンを動的に生成して表示する。
-        controller.submit(str(value)) を呼ぶ前提（self.controller が attach 済みであること）。
+        on_answer(str(value)) を通す（controller attach 済みが前提）。
         """
-        # 既定（互換）
         if choices is None:
             choices = [2, 2.25, 2.5, 3]
 
@@ -325,32 +341,26 @@ class PokerTrainerUI:
             lbl = tk.Label(self.followup_frame, text=prompt, anchor="w", justify="left")
             lbl.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(0, 4))
 
-        # ボタン生成（横並び）
         row = tk.Frame(self.followup_frame)
         row.pack(side=tk.TOP, fill=tk.X)
 
-        # controller への接続チェック（落とさない）
-        ctrl = getattr(self, "controller", None)
+        ctrl_ready = self.controller is not None
 
         for v in choices:
-            # 表示は 2 / 2.25 / 2.5 / 3 のように綺麗に
             label = str(int(v)) if float(v).is_integer() else str(v)
-
             btn = tk.Button(
                 row,
                 text=label,
-                command=(lambda val=v: ctrl.submit(str(val))) if ctrl else None,
+                command=(lambda val=v: self.on_answer(str(val))) if ctrl_ready else None,
             )
-            btn.configure(state=tk.NORMAL if ctrl else tk.DISABLED)
+            btn.configure(state=tk.NORMAL if ctrl_ready else tk.DISABLED)
             btn.pack(side=tk.LEFT, padx=4, pady=2)
 
         # 表示位置：cards_frame の手前
         self.followup_frame.pack_forget()
         self.followup_frame.pack(before=self.cards_frame, padx=10, pady=5)
 
-
     def hide_followup_size_buttons(self) -> None:
-        # followup_frame 内をクリアして隠す
         try:
             for w in self.followup_frame.winfo_children():
                 w.destroy()
@@ -391,7 +401,6 @@ class PokerTrainerUI:
         info_text: str = "",
         on_next=None,
     ) -> None:
-        # 既に開いていたら閉じる（多重ポップアップ防止）
         self.close_range_grid_popup()
 
         win = tk.Toplevel(self.root)
@@ -410,9 +419,8 @@ class PokerTrainerUI:
         pad = max(1, int(2 * SCALE))
         cell_font_size = max(7, int(9 * SCALE))
 
-        grid_px = 13 * cell_size  # 表のピクセルサイズ（正方形）
+        grid_px = 13 * cell_size
 
-        # Header
         header = ttk.Frame(win)
         header.pack(fill="x", padx=10, pady=10)
 
@@ -425,6 +433,7 @@ class PokerTrainerUI:
         btns.pack(side="right")
 
         if callable(on_next):
+
             def _next_and_close():
                 _on_close()
                 try:
@@ -441,7 +450,6 @@ class PokerTrainerUI:
         if info_text:
             ttk.Label(header, text=info_text, wraplength=620, justify="left").pack(anchor="w", pady=(8, 0))
 
-        # Body（Canvas）
         body = ttk.Frame(win)
         body.pack(padx=10, pady=10)
 
@@ -458,16 +466,23 @@ class PokerTrainerUI:
 
                 fill = f"#{cell.bg_rgb}"
                 canvas.create_rectangle(
-                    x0 + pad, y0 + pad, x1 - pad, y1 - pad,
-                    fill=fill, outline="#c0c0c0"
+                    x0 + pad,
+                    y0 + pad,
+                    x1 - pad,
+                    y1 - pad,
+                    fill=fill,
+                    outline="#c0c0c0",
                 )
 
                 label = (cell.label or "").strip()
                 if label:
                     fg = _contrast_text_color(cell.bg_rgb)
                     canvas.create_text(
-                        (x0 + x1) / 2, (y0 + y1) / 2,
-                        text=label, fill=fg, font=("", cell_font_size)
+                        (x0 + x1) / 2,
+                        (y0 + y1) / 2,
+                        text=label,
+                        fill=fg,
+                        font=("", cell_font_size),
                     )
 
         if highlight_rc is not None:
@@ -478,12 +493,10 @@ class PokerTrainerUI:
             y1 = y0 + cell_size
             canvas.create_rectangle(x0 + 1, y0 + 1, x1 - 1, y1 - 1, outline="#ff0000", width=3)
 
-        # ウィンドウサイズ確定（表サイズに追従）
         win.update_idletasks()
         req_w = win.winfo_reqwidth()
         req_h = win.winfo_reqheight()
 
-        # 画面外にはみ出さない位置にクランプ
         try:
             self.root.update_idletasks()
             rx = self.root.winfo_x()
@@ -496,7 +509,7 @@ class PokerTrainerUI:
         sw = win.winfo_screenwidth()
         sh = win.winfo_screenheight()
 
-        x = rx + rw + 10  # まず右側狙い
+        x = rx + rw + 10
         if x + req_w > sw:
             x = max(0, sw - req_w - 10)
 
