@@ -125,6 +125,7 @@ def main() -> None:
     now = datetime.now(timezone.utc).astimezone()
     final: dict[str, Any] = {
         "meta": {
+            "schema_version": 1,
             "generated_at": now.isoformat(timespec="seconds"),
             "source": str(excel_path),
             "sheet": SHEET_NAME,

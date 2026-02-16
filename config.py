@@ -2,7 +2,21 @@
 from __future__ import annotations
 from pathlib import Path
 
-EXCEL_PATH = r"C:\MyPokerApp\data_src\PREFLOP_GAME_FOR_BEGINNERS-INTERMEDIATE.xlsx"
+_EXCEL_PATH_WINDOWS = r"C:\MyPokerApp\data_src\PREFLOP_GAME_FOR_BEGINNERS-INTERMEDIATE.xlsx"
+
+
+def _resolve_excel_path(win_path: str) -> str:
+    # In WSL, prefer /mnt/<drive>/... when it exists.
+    if len(win_path) >= 3 and win_path[1:3] == ":\\":
+        drive = win_path[0].lower()
+        wsl_path = f"/mnt/{drive}/{win_path[3:].replace('\\', '/')}"
+        wsl_candidate = Path(wsl_path)
+        if wsl_candidate.exists():
+            return str(wsl_candidate)
+    return win_path
+
+
+EXCEL_PATH = _resolve_excel_path(_EXCEL_PATH_WINDOWS)
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = (BASE_DIR / "data").resolve()

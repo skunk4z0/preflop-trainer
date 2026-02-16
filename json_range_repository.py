@@ -69,9 +69,31 @@ class JsonRangeRepository:
         if not isinstance(root, dict):
             raise ValueError("final_tags.json must be an object with keys: meta, ranges")
 
+        meta = root.get("meta")
+        if not isinstance(meta, dict):
+            raise ValueError("final_tags.json: 'meta' must be a dict")
+        schema_version = int(meta.get("schema_version", 1) or 1)
+        if schema_version != 1:
+            raise ValueError(
+                "final_tags.json: unsupported schema_version="
+                f"{schema_version}. buildをやり直して final_tags.json を再生成して"
+            )
+
         ranges = root.get("ranges")
         if not isinstance(ranges, dict):
             raise ValueError("final_tags.json: 'ranges' must be a dict")
+        if ranges:
+            kind_sample = next(iter(ranges.values()))
+            if not isinstance(kind_sample, dict):
+                raise ValueError("final_tags.json: invalid 'ranges' structure (kind -> dict expected)")
+            if kind_sample:
+                pos_sample = next(iter(kind_sample.values()))
+                if not isinstance(pos_sample, dict):
+                    raise ValueError("final_tags.json: invalid 'ranges' structure (position -> dict expected)")
+                if pos_sample:
+                    tag_sample = next(iter(pos_sample.values()))
+                    if not isinstance(tag_sample, str):
+                        raise ValueError("final_tags.json: invalid 'ranges' structure (tag -> str expected)")
 
         # 正規化格納：kind/pos/hand_key は UPPER 統一
         self._ranges: Dict[str, Dict[str, Dict[str, str]]] = {}
