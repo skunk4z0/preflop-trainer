@@ -64,6 +64,13 @@ class GameController:
             self._telemetry_obj = Telemetry(project_root=project_root)
         return self._telemetry_obj
 
+    def _safe_getattr(self, obj: Any, name: str, default: Any = None) -> Any:
+        try:
+            return getattr(obj, name, default)
+        except Exception as e:
+            logger.warning("[CTRL] failed to getattr(%r, %s): %s", obj, name, e)
+            return default
+
     # -------------------------
     # Start / Reset
     # -------------------------
@@ -88,6 +95,80 @@ class GameController:
         self._last_answer_mode = ""
         self._last_header_text = ""
 
+    def _infer_problem_type_from_ctx(
+        self,
+        ctx: Any,
+        answer_mode: str,
+    ) -> Optional[ProblemType]:
+        if ctx is None:
+            return None
+        am = str(answer_mode or "").upper()
+        if am == "OR":
+            return ProblemType.JUEGO_OR
+        if am == "OR_SB":
+            return ProblemType.JUEGO_OR_SB
+        if am in {"3BET", "THREE_BET"}:
+            return ProblemType.JUEGO_3BET
+        if am.startswith("ROL"):
+            return ProblemType.JUEGO_ROL
+
+        pos = str(getattr(ctx, "position", "") or "").upper()
+        limpers = int(getattr(ctx, "limpers", 0) or 0)
+        if pos in {"BB_OOP", "BBVSSB"}:
+            return ProblemType.JUEGO_ROL
+        if limpers > 0:
+            return ProblemType.JUEGO_ROL
+        if pos in {"EP", "MP", "CO", "BTN"}:
+            return ProblemType.JUEGO_OR
+        if pos == "SB":
+            return ProblemType.JUEGO_OR_SB
+        return None
+
+    def _extract_ctx(self, ret: Any) -> Any:
+        return self._safe_getattr(ret, "ctx", None) or self._safe_getattr(self.engine, "context", None)
+
+    def _extract_problem_type(self, ret: Any, ctx: Any) -> Optional[ProblemType]:
+        ptype = self._safe_getattr(ret, "problem_type", None) or self._safe_getattr(self.engine, "current_problem", None)
+        if ptype is not None:
+            return ptype
+        return self._infer_problem_type_from_ctx(
+            ctx=ctx,
+            answer_mode=str(self._safe_getattr(ret, "answer_mode", "") or ""),
+        )
+
+    def _resolve_answer_mode(self, ret: Any, problem_type: Optional[ProblemType], ctx: Any) -> str:
+        answer_mode = str(self._safe_getattr(ret, "answer_mode", "") or "")
+        if answer_mode:
+            return answer_mode
+        if problem_type == ProblemType.JUEGO_OR:
+            return "OR"
+        if problem_type == ProblemType.JUEGO_OR_SB:
+            return "OR_SB"
+        if problem_type == ProblemType.JUEGO_3BET:
+            return "3BET"
+        if problem_type == ProblemType.JUEGO_ROL:
+            return "ROL"
+        return "OR"
+
+    def _resolve_header_text(self, ret: Any) -> str:
+        header = (
+            self._safe_getattr(ret, "header_text", None)
+            or self._safe_getattr(ret, "text", None)
+            or ""
+        )
+        return str(header) if header else "次の問題です。アクションを選択してください。"
+
+    def _apply_context_to_ui(self, ctx: Any) -> None:
+        if ctx is None:
+            return
+        hole_cards = self._safe_getattr(ctx, "hole_cards", None)
+        if isinstance(hole_cards, (tuple, list)) and len(hole_cards) == 2:
+            self._ui_call("deal_cards", tuple(hole_cards))
+        hand = self._safe_getattr(ctx, "excel_hand_key", None)
+        pos = self._safe_getattr(ctx, "position", None)
+        if hand is not None or pos is not None:
+            self._ui_call("set_hand_pos", hand=hand or "?", pos=pos or "?")
+
     # -------------------------
     # Next question
     # -------------------------
@@ -110,33 +191,32 @@ class GameController:
             return
 
         try:
-            generated = self.engine.new_question()
+            ret = self.engine.new_question()
         except Exception as e:
             self._ui_call("show_text", f"内部エラー：問題生成に失敗しました: {e}")
             logger.error("[CTRL] engine.new_question failed: %s", e, exc_info=True)
             return
 
-        # 表示状態（Telemetry用に保持）
-        self._last_answer_mode = getattr(generated, "answer_mode", "") or ""
-        self._last_header_text = getattr(generated, "header_text", "") or ""
+        # 1) normalize return payload (GeneratedQuestion / SubmitResult 両対応)
+        ctx = self._extract_ctx(ret)
+        problem_type = self._extract_problem_type(ret, ctx)
+        self._last_answer_mode = self._resolve_answer_mode(ret, problem_type, ctx)
+        self._last_header_text = self._resolve_header_text(ret)
 
-        # UIモード（ボタン種類）
+        # 2) apply normalized data to UI
+        self._apply_context_to_ui(ctx)
         self._ui_call("set_answer_mode", self._last_answer_mode)
-
-        # Context 表示
-        ctx = generated.ctx
-        self._ui_call("deal_cards", ctx.hole_cards)
-        self._ui_call("set_hand_pos", hand=ctx.excel_hand_key, pos=ctx.position)
         self._ui_call("show_text", self._last_header_text)
 
         # Telemetry: question_shown
         try:
-            self._telemetry().on_question_shown(
-                engine=self.engine,
-                ctx=ctx,
-                answer_mode=self._last_answer_mode,
-                header_text=self._last_header_text,
-            )
+            if ctx is not None:
+                self._telemetry().on_question_shown(
+                    engine=self.engine,
+                    ctx=ctx,
+                    answer_mode=self._last_answer_mode,
+                    header_text=self._last_header_text,
+                )
         except Exception as e:
             logger.warning("[CTRL] telemetry question_shown failed: %s", e, exc_info=True)
 

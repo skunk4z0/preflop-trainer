@@ -221,30 +221,20 @@ class PokerTrainerUI:
             self.btn_raise.pack(side=tk.LEFT, padx=5)
             self.btn_limp_call.pack(side=tk.LEFT, padx=5)
 
-        elif m == "ROL_NONBB":
-            self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
-            self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
-            self.btn_limp_call.config(text="CALL", command=lambda: self.on_answer("CALL"))
-
-            self.btn_fold.pack(side=tk.LEFT, padx=5)
-            self.btn_raise.pack(side=tk.LEFT, padx=5)
-            self.btn_limp_call.pack(side=tk.LEFT, padx=5)
-
-        elif m == "ROL_BB_OOP":
-            self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
-            self.btn_limp_call.config(text="CALL", command=lambda: self.on_answer("CALL"))
-            self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
-
-            self.btn_fold.pack(side=tk.LEFT, padx=5)
-            self.btn_limp_call.pack(side=tk.LEFT, padx=5)
-            self.btn_raise.pack(side=tk.LEFT, padx=5)
-
-        elif m == "ROL_BBVS_SB":
-            self.btn_fold.config(text="CHECK", command=lambda: self.on_answer("CHECK"))
-            self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
-
-            self.btn_fold.pack(side=tk.LEFT, padx=5)
-            self.btn_raise.pack(side=tk.LEFT, padx=5)
+        elif m == "ROL":
+            pos = (self.var_pos.get() or "").strip().upper()
+            if pos == "BBVSSB":
+                self.btn_fold.config(text="CHECK", command=lambda: self.on_answer("CHECK"))
+                self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
+                self.btn_fold.pack(side=tk.LEFT, padx=5)
+                self.btn_raise.pack(side=tk.LEFT, padx=5)
+            else:
+                self.btn_fold.config(text="FOLD", command=lambda: self.on_answer("FOLD"))
+                self.btn_raise.config(text="RAISE", command=lambda: self.on_answer("RAISE"))
+                self.btn_limp_call.config(text="CALL", command=lambda: self.on_answer("CALL"))
+                self.btn_fold.pack(side=tk.LEFT, padx=5)
+                self.btn_raise.pack(side=tk.LEFT, padx=5)
+                self.btn_limp_call.pack(side=tk.LEFT, padx=5)
 
         else:
             # 想定外は安全側でORに戻す

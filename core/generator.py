@@ -164,11 +164,7 @@ class JuegoProblemGenerator:
         if problem_type == ProblemType.JUEGO_OR_SB:
             return "OR_SB"
         if problem_type == ProblemType.JUEGO_ROL:
-            if ctx.position == "BBvsSB":
-                return "ROL_BBVS_SB"
-            if ctx.position == "BB_OOP":
-                return "ROL_BB_OOP"
-            return "ROL_NONBB"
+            return "ROL"
         if problem_type == ProblemType.JUEGO_3BET:
             return "3BET"
         return "OR"
