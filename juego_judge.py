@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
@@ -31,6 +32,8 @@ A_RAISE = "RAISE"
 A_CALL = "CALL"
 A_LIMP_CALL = "LIMP_CALL"
 A_CHECK = "CHECK"
+
+logger = logging.getLogger(__name__)
 
 
 def _norm_ws(s: str) -> str:
@@ -94,6 +97,9 @@ def _parse_bb_from_tag(tag_upper: str) -> Optional[float]:
 # =========================
 def _expected_action_or(*, tag_upper: str, loose: bool) -> str:
     # OR: OPEN_TIGHT / OPEN_LOOSE / FOLD
+    known_or_tags = {"OPEN_TIGHT", "OPEN_LOOSE", "FOLD", ""}
+    if tag_upper not in known_or_tags:
+        logger.warning("Unexpected OR tag: %s (loose=%s); fallback=FOLD", tag_upper, loose)
     if loose:
         return A_RAISE if tag_upper in ("OPEN_TIGHT", "OPEN_LOOSE") else A_FOLD
     return A_RAISE if tag_upper == "OPEN_TIGHT" else A_FOLD
@@ -138,25 +144,30 @@ def _expected_action_rol(*, position: str, tag_upper: str, loose: bool) -> Tuple
 
     返り値: (expected_action, expected_raise_size_bb)
     """
-    pos = _norm_ws(position)
+    pos = _norm_ws(position).upper()
 
-    # BBvsSB 特例：ROL_ALWAYS(=4BB) 以外は CHECK
-    if pos == "BBvsSB":
+    # BBvsSB 特例
+    if pos == "BBVSSB":
         if tag_upper == "ROL_ALWAYS":
             return A_RAISE, 4.0
+        if tag_upper == "OVERLIMP_VS_FISH":
+            return A_CHECK, None
+        if tag_upper == "ROL_VS_FISH":
+            logger.warning("Unexpected ROL tag mixed in BBvsSB: %s; fallback=CHECK", tag_upper)
+            return A_CHECK, None
         return A_CHECK, None
 
     # 通常：Alwaysは5BB
     if tag_upper == "ROL_ALWAYS":
         return A_RAISE, 5.0
 
-    # Overlimpは常にCALL
-    if tag_upper == "OVERLIMP_VS_FISH":
-        return A_CALL, None
-
     # ROL_VS_FISH は loose でCALL / tightでFOLD
     if tag_upper == "ROL_VS_FISH":
         return (A_CALL, None) if loose else (A_FOLD, None)
+
+    # Overlimpは通常CALL
+    if tag_upper == "OVERLIMP_VS_FISH":
+        return A_CALL, None
 
     return A_FOLD, None
 
