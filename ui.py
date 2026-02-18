@@ -51,6 +51,7 @@ class PokerTrainerUI:
             ("btn_limp_call", "CALL", "CALL"),
         ],
     }
+    _SITUATION_KINDS: tuple[str, ...] = ("OR", "OR_SB", "ROL", "3BET")
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -146,11 +147,34 @@ class PokerTrainerUI:
         self.btn_confirm_start.pack(side=tk.LEFT, padx=5)
         self.btn_confirm_back.pack(side=tk.LEFT, padx=5)
 
-        # シチュエーション別（未実装）
+        # シチュエーション別
         self.situation_screen_frame = tk.Frame(self.menu_container)
-        self.lbl_situation_todo = tk.Label(self.situation_screen_frame, text="シチュエーション別は未実装です")
-        self.lbl_situation_todo.pack(side=tk.LEFT, padx=5)
-        self.btn_situation_back = tk.Button(self.situation_screen_frame, text="戻る", command=self.open_top, width=10)
+        self.lbl_situation_title = tk.Label(self.situation_screen_frame, text="kindを選んで開始")
+        self.lbl_situation_title.pack(anchor="w")
+        self.var_kind_checks: dict[str, tk.BooleanVar] = {}
+        self.situation_checks_frame = tk.Frame(self.situation_screen_frame)
+        self.situation_checks_frame.pack(anchor="w", pady=(4, 6))
+        for kind in self._SITUATION_KINDS:
+            var = tk.BooleanVar(value=False)
+            self.var_kind_checks[kind] = var
+            tk.Checkbutton(
+                self.situation_checks_frame,
+                text=config.kind_short_label(kind),
+                variable=var,
+                onvalue=True,
+                offvalue=False,
+                anchor="w",
+            ).pack(anchor="w")
+        situation_buttons = tk.Frame(self.situation_screen_frame)
+        situation_buttons.pack(anchor="w")
+        self.btn_situation_start = tk.Button(
+            situation_buttons,
+            text="Start",
+            command=self.start_situation_kinds,
+            width=10,
+        )
+        self.btn_situation_back = tk.Button(situation_buttons, text="戻る", command=self.open_top, width=10)
+        self.btn_situation_start.pack(side=tk.LEFT, padx=5)
         self.btn_situation_back.pack(side=tk.LEFT, padx=5)
 
         # --- 回答ボタン（通常） ---
@@ -213,7 +237,7 @@ class PokerTrainerUI:
         self.controller = controller
 
     # -------------------------
-    # 画面遷移（TOP/難易度/確認/未実装）
+    # 画面遷移（TOP/難易度/確認/シチュエーション）
     # -------------------------
     def _ensure_menu_visible(self) -> None:
         if self.menu_container.winfo_manager() == "":
@@ -265,7 +289,9 @@ class PokerTrainerUI:
 
     def show_situation_screen(self) -> None:
         self._switch_menu_screen(self.situation_screen_frame)
-        self.show_text("シチュエーション別は未実装です。")
+        for kind, var in self.var_kind_checks.items():
+            var.set(kind == "OR")
+        self.show_text("kindを1つ以上選んで Start を押してください。")
 
     def show_quiz_screen(self) -> None:
         self._tk_call("menu screen hide", self.menu_container.pack_forget)
@@ -331,6 +357,13 @@ class PokerTrainerUI:
             self.show_text("内部エラー：Controllerが未接続です")
             return
         self.controller.start_selected_kinds()
+
+    def start_situation_kinds(self) -> None:
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        selected_kinds = [kind for kind, var in self.var_kind_checks.items() if var.get()]
+        self.controller.start_juego_with_kinds(selected_kinds)
 
     def start_juego_beginner(self) -> None:
         if self.controller is None:

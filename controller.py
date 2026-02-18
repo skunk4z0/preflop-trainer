@@ -139,6 +139,28 @@ class GameController:
         self._ui_call("show_quiz_screen")
         self.new_question()
 
+    def start_juego_with_kinds(self, kinds: list[str]) -> None:
+        self.mode = "kind"
+        self.selected_difficulty = None
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for kind in kinds:
+            key = str(kind or "").strip().upper()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(key)
+        self.selected_kinds = normalized
+
+        if not self.selected_kinds:
+            self._ui_call("show_text", "kindを1つ以上選択してください")
+            return
+
+        self.engine.start_juego(Difficulty.BEGINNER, selected_kinds=self.selected_kinds)
+        self._ui_call("show_quiz_screen")
+        self.new_question()
+
     def reset_state(self) -> None:
         self.engine.reset_state()
         self.mode = "difficulty"
