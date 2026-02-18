@@ -54,3 +54,4 @@ data/*
 # Telemetry runtime artifacts (never commit)
 data/events*.jsonl
 data/user_id*.txt
+run_app_debug.bat
