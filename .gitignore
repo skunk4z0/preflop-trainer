@@ -1,57 +1,33 @@
-# =========================
-# Python junk
-# =========================
+cat >> .gitignore << 'EOF'
+
+# --- Python ---
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# =========================
-# Virtual env
-# =========================
+# --- venv ---
+.venv/
+.venv-wsl/
 venv/
-env/
-.venv*/
-.venv-*/
+ENV/
+.env/
 
-# =========================
-# OS / editor
-# =========================
-.DS_Store
-Thumbs.db
-
-# =========================
-# Local assets (large / private)
-# =========================
-*.xlsx
-*.xls
-~$*.xlsx
-
-cards/
-yokosawarange/
-
-# =========================
-# Tool outputs / logs
-# =========================
-tools/out/
+# --- logs ---
 *.log
 
-# =========================
-# Git metadata (never ship)
-# =========================
-.git/
+# --- build / tools outputs ---
+tools/out/
 
-# =========================
-# Data folder policy:
-#   - ignore everything under data/
-#   - track only runtime-needed assets (whitelist)
-# =========================
-data/*
-!data/
-!data/final_tags.json
-!data/ranges_pack.json
+# --- app runtime data (local) ---
+data/events.jsonl
+data/user_id.txt
 
-# Telemetry runtime artifacts (never commit)
-data/events*.jsonl
-data/user_id*.txt
-run_app_debug.bat
+# --- patches ---
+*.patch
+EOF
+# --- local assets / generated data (decide later) ---
+cards/
+data/datasheet_ranges.json
