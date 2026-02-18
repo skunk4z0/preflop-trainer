@@ -150,3 +150,41 @@ REF_COLOR_CELLS = {
         "CALL_VS_OPEN_EQ_2X":    "ffe599",
     },
 }
+
+
+# =========================
+# Practice flow mappings
+# =========================
+KIND_SHORT_LABEL_MAP = {
+    "OR": "オープン",
+    "OR_SB": "SBオープン",
+    "ROL": "リンプ対応",
+    "3BET": "3ベット",
+}
+
+DIFFICULTY_SHORT_LABEL_MAP = {
+    "BEGINNER": "初級",
+    "INTERMEDIATE": "中級",
+    "ADVANCED": "上級",
+}
+
+DIFFICULTY_KIND_MAP = {
+    "BEGINNER": ["OR"],
+    "INTERMEDIATE": ["OR_SB", "ROL"],
+    "ADVANCED": ["3BET"],
+}
+
+
+def kind_short_label(kind: str) -> str:
+    key = str(kind or "").strip().upper()
+    return KIND_SHORT_LABEL_MAP.get(key, kind)
+
+
+def difficulty_short_label(difficulty_name: str) -> str:
+    key = str(difficulty_name or "").strip().upper()
+    return DIFFICULTY_SHORT_LABEL_MAP.get(key, difficulty_name)
+
+
+def kinds_for_difficulty(difficulty_name: str) -> list[str]:
+    key = str(difficulty_name or "").strip().upper()
+    return list(DIFFICULTY_KIND_MAP.get(key, []))

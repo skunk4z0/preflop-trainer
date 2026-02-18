@@ -6,6 +6,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Optional
 
+import config
 from core.engine import PokerEngine, SubmitResult
 from core.models import Difficulty, ProblemType, OpenRaiseProblemContext
 from core.telemetry import Telemetry
@@ -39,6 +40,11 @@ class GameController:
 
         # 遅延生成（init差分を小さくする）
         self._telemetry_obj: Optional[Telemetry] = None
+
+        # 画面遷移/出題条件
+        self.mode: str = "difficulty"  # "difficulty" or "kind"
+        self.selected_difficulty: Optional[Difficulty] = None
+        self.selected_kinds: list[str] = []
 
     # -------------------------
     # Small helpers
@@ -79,19 +85,65 @@ class GameController:
         self.new_question()
 
     def start_juego_beginner(self) -> None:
-        self.engine.start_juego(Difficulty.BEGINNER)
+        self.mode = "difficulty"
+        self.selected_difficulty = Difficulty.BEGINNER
+        self.selected_kinds = config.kinds_for_difficulty(Difficulty.BEGINNER.name)
+        self.engine.start_juego(Difficulty.BEGINNER, selected_kinds=self.selected_kinds)
         self.new_question()
 
     def start_juego_intermediate(self) -> None:
-        self.engine.start_juego(Difficulty.INTERMEDIATE)
+        self.mode = "difficulty"
+        self.selected_difficulty = Difficulty.INTERMEDIATE
+        self.selected_kinds = config.kinds_for_difficulty(Difficulty.INTERMEDIATE.name)
+        self.engine.start_juego(Difficulty.INTERMEDIATE, selected_kinds=self.selected_kinds)
         self.new_question()
 
     def start_juego_advanced(self) -> None:
-        self.engine.start_juego(Difficulty.ADVANCED)
+        self.mode = "difficulty"
+        self.selected_difficulty = Difficulty.ADVANCED
+        self.selected_kinds = config.kinds_for_difficulty(Difficulty.ADVANCED.name)
+        self.engine.start_juego(Difficulty.ADVANCED, selected_kinds=self.selected_kinds)
+        self.new_question()
+
+    def open_top(self) -> None:
+        self.mode = "difficulty"
+        self._ui_call("show_top_screen")
+
+    def open_difficulty_practice(self) -> None:
+        self.mode = "difficulty"
+        self._ui_call("show_difficulty_screen")
+
+    def open_situation_practice(self) -> None:
+        self.mode = "kind"
+        self._ui_call("show_situation_screen")
+
+    def select_difficulty(self, difficulty: Difficulty) -> None:
+        self.mode = "difficulty"
+        self.selected_difficulty = difficulty
+        self.selected_kinds = config.kinds_for_difficulty(difficulty.name)
+        self._ui_call(
+            "show_difficulty_confirm_screen",
+            difficulty_label=config.difficulty_short_label(difficulty.name),
+            selected_kinds=self.selected_kinds,
+        )
+
+    def start_selected_kinds(self) -> None:
+        if self.selected_difficulty is None:
+            self._ui_call("show_text", "難易度を選択してください（初級/中級/上級）")
+            return
+        if not self.selected_kinds:
+            self._ui_call("show_text", "選択中の難易度に kind が定義されていません")
+            return
+
+        self.engine.start_juego(self.selected_difficulty, selected_kinds=self.selected_kinds)
+        self._ui_call("show_quiz_screen")
         self.new_question()
 
     def reset_state(self) -> None:
         self.engine.reset_state()
+        self.mode = "difficulty"
+        self.selected_difficulty = None
+        self.selected_kinds = []
         self._last_answer_mode = ""
         self._last_header_text = ""
 
@@ -186,7 +238,7 @@ class GameController:
             self._ui_call("show_text", "【ヨコサワ式】オープンレイズ問題（未実装）")
             return
 
-        if self.engine.difficulty is None:
+        if self.engine.difficulty is None and not getattr(self.engine, "selected_kinds", []):
             self._ui_call("show_text", "難易度を選択してください（初級/中級/上級）")
             return
 

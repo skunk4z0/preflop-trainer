@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import random
 from typing import Optional
 
+import config
+
 from .models import Difficulty, GeneratedQuestion, OpenRaiseProblemContext, ProblemType
+
+
+logger = logging.getLogger("poker_trainer.core.generator")
 
 
 class JuegoProblemGenerator:
@@ -29,15 +35,11 @@ class JuegoProblemGenerator:
         # main.py で repo.list_positions("CC_3BET") を渡す想定（=最終JSONのposキー）
         self._positions_3bet = positions_3bet or []
 
-        self._pool_beginner = [ProblemType.JUEGO_OR]
-        self._pool_intermediate = [ProblemType.JUEGO_OR_SB, ProblemType.JUEGO_3BET]
-        self._pool_advanced = [ProblemType.JUEGO_ROL]
-
     # -------------------------
     # Public
     # -------------------------
-    def generate(self, difficulty: Difficulty) -> GeneratedQuestion:
-        problem_type = self._pick_problem_type(difficulty)
+    def generate(self, selected_kinds: list[str]) -> GeneratedQuestion:
+        problem_type = self._pick_problem_type(selected_kinds)
         ctx = self._generate_context(problem_type)
         answer_mode = self._answer_mode(problem_type, ctx)
         header_text = self._header_text(problem_type, ctx)
@@ -48,26 +50,74 @@ class JuegoProblemGenerator:
             header_text=header_text,
         )
 
-        
     # 互換：旧Engineが next_question(difficulty) を呼ぶ前提のため残す
-    def next_question(self, difficulty: Difficulty) -> GeneratedQuestion:
-        return self.generate(difficulty)
+    def next_question(
+        self,
+        difficulty: Difficulty | None = None,
+        selected_kinds: Optional[list[str]] = None,
+    ) -> GeneratedQuestion:
+        pool_state = "None" if selected_kinds is None else ("empty" if len(selected_kinds) == 0 else f"len={len(selected_kinds)}")
+        logger.debug(
+            "next_question: difficulty=%r selected_kinds=%r pool=%s",
+            difficulty,
+            selected_kinds,
+            pool_state,
+        )
+        normalized_kinds = [str(k or "").strip().upper() for k in (selected_kinds or []) if str(k or "").strip()]
+        normalized_pool_state = "empty" if not normalized_kinds else f"len={len(normalized_kinds)}"
+        logger.debug(
+            "next_question: normalized selected_kinds=%r pool=%s",
+            normalized_kinds,
+            normalized_pool_state,
+        )
+        if not normalized_kinds:
+            difficulty_name = getattr(difficulty, "name", "") if difficulty is not None else ""
+            fallback_kinds = [str(k).strip().upper() for k in config.kinds_for_difficulty(difficulty_name) if str(k).strip()]
+            logger.debug(
+                "next_question: config fallback difficulty_name=%r kinds=%r pool=%s",
+                difficulty_name,
+                fallback_kinds,
+                "empty" if not fallback_kinds else f"len={len(fallback_kinds)}",
+            )
+            normalized_kinds = fallback_kinds or ["OR"]
+            logger.debug(
+                "next_question: final fallback kinds=%r pool=%s",
+                normalized_kinds,
+                "empty" if not normalized_kinds else f"len={len(normalized_kinds)}",
+            )
+
+        return self.generate(normalized_kinds)
 
 
     # -------------------------
     # Internal
     # -------------------------
-    def _pick_problem_type(self, difficulty: Difficulty) -> ProblemType:
-        if difficulty == Difficulty.BEGINNER:
-            pool = self._pool_beginner
-        elif difficulty == Difficulty.INTERMEDIATE:
-            pool = self._pool_intermediate
-        else:
-            pool = self._pool_advanced
+    def _pick_problem_type(self, selected_kinds: list[str]) -> ProblemType:
+        logger.debug("pick_problem_type: selected_kinds_in=%r", selected_kinds)
+        kinds = [str(k or "").strip().upper() for k in selected_kinds if str(k or "").strip()]
+        logger.debug(
+            "pick_problem_type: normalized_candidates=%r state=%s",
+            kinds,
+            "empty" if not kinds else f"len={len(kinds)}",
+        )
+        if not kinds:
+            logger.debug("pick_problem_type: candidates empty -> fallback JUEGO_OR")
+            return ProblemType.JUEGO_OR
+        kind = self._rng.choice(kinds)
+        logger.debug("pick_problem_type: chosen_kind=%r", kind)
+        return self._kind_to_problem_type(kind)
 
-        if not pool:
-            return ProblemType.JUEGO_BB_ISO  # ダミー（未使用想定）
-        return self._rng.choice(pool)
+    @staticmethod
+    def _kind_to_problem_type(kind: str) -> ProblemType:
+        if kind == "OR":
+            return ProblemType.JUEGO_OR
+        if kind == "OR_SB":
+            return ProblemType.JUEGO_OR_SB
+        if kind in {"3BET", "CC_3BET"}:
+            return ProblemType.JUEGO_3BET
+        if kind == "ROL":
+            return ProblemType.JUEGO_ROL
+        return ProblemType.JUEGO_OR
 
     def _generate_context(self, problem_type: ProblemType) -> OpenRaiseProblemContext:
         if problem_type == ProblemType.JUEGO_OR:
@@ -173,7 +223,7 @@ class JuegoProblemGenerator:
         if problem_type == ProblemType.JUEGO_OR:
             loose_msg = "｜ルースなplayerがいます" if ctx.loose_player_exists else ""
             return (
-                "【JUEGO 初級】オープンレイズ判断（OR）｜"
+                "【JUEGO】オープンレイズ判断（OR）｜"
                 f"Pos: {ctx.position}｜"
                 f"{ctx.open_size_bb}BB"
                 f"{loose_msg}"
@@ -181,7 +231,7 @@ class JuegoProblemGenerator:
 
         if problem_type == ProblemType.JUEGO_OR_SB:
             return (
-                "【JUEGO 中級】SBオープン判断（OR_SB）｜"
+                "【JUEGO】SBオープン判断（OR_SB）｜"
                 "Pos: SB｜"
                 f"{ctx.open_size_bb}BB"
             )
@@ -189,14 +239,14 @@ class JuegoProblemGenerator:
         if problem_type == ProblemType.JUEGO_ROL:
             fish_msg = "｜ルースなplayerがいます" if ctx.loose_player_exists else ""
             return (
-                "【JUEGO 上級】リンプインへの対応（ROL）｜"
+                "【JUEGO】リンプインへの対応（ROL）｜"
                 f"Pos: {ctx.position}｜"
                 f"Raise={ctx.open_size_bb}BB"
                 f"{fish_msg}"
             )
 
         if problem_type == ProblemType.JUEGO_3BET:
-            return "【JUEGO 中級】3BET判断（簡易）｜" f"Pos: {ctx.position}"
+            return "【JUEGO】3BET判断（簡易）｜" f"Pos: {ctx.position}"
 
         return "内部：未知の問題タイプです"
 

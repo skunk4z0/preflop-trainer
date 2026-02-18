@@ -41,6 +41,7 @@ class PokerEngine:
         self.enable_debug = bool(enable_debug)
 
         self.difficulty: Optional[Difficulty] = None
+        self.selected_kinds: list[str] = []
         self.current_problem: Optional[ProblemType] = None
         self.context: Optional[OpenRaiseProblemContext] = None
 
@@ -63,8 +64,17 @@ class PokerEngine:
         self.followup = None
         self._last_judge_result = None
 
-    def start_juego(self, difficulty: Difficulty) -> None:
+    def start_juego(self, difficulty: Difficulty, selected_kinds: Optional[list[str]] = None) -> None:
         self.difficulty = difficulty
+        self.selected_kinds = [str(k).strip().upper() for k in (selected_kinds or []) if str(k).strip()]
+        pool_state = "None" if selected_kinds is None else ("empty" if not self.selected_kinds else f"len={len(self.selected_kinds)}")
+        logger.debug(
+            "start_juego: selected_kinds_raw=%r difficulty=%r pool=%s normalized_kinds=%r",
+            selected_kinds,
+            difficulty,
+            pool_state,
+            self.selected_kinds,
+        )
         self.current_problem = None
         self.context = None
         self.followup = None
@@ -72,6 +82,7 @@ class PokerEngine:
 
     def reset_state(self) -> None:
         self.difficulty = None
+        self.selected_kinds = []
         self.current_problem = None
         self.context = None
         self.followup = None
@@ -81,7 +92,7 @@ class PokerEngine:
     # Next question
     # -------------------------
     def new_question(self) -> SubmitResult:
-        if self.difficulty is None:
+        if self.difficulty is None and not self.selected_kinds:
             return SubmitResult(
                 text="難易度を選択してください（初級/中級/上級）",
                 is_correct=None,
@@ -91,7 +102,18 @@ class PokerEngine:
                 judge_result=None,
             )
 
-        q = self.generator.next_question(self.difficulty)
+        kinds = list(self.selected_kinds)
+        pool_state = "None" if not kinds else f"len={len(kinds)}"
+        logger.debug("new_question: pool=%s selected_kinds=%r difficulty=%r", pool_state, kinds, self.difficulty)
+
+        try:
+            q = self.generator.next_question(
+                difficulty=self.difficulty,
+                selected_kinds=(kinds if kinds else None),
+            )
+        except TypeError:
+            # 旧generator互換
+            q = self.generator.next_question(self.difficulty)
         self.current_problem = q.problem_type
         self.context = q.ctx
         self.followup = None
