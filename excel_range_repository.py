@@ -6,7 +6,8 @@ logger = logging.getLogger(__name__)
 
 import re
 from dataclasses import dataclass
-from typing import Any, List, Tuple
+from typing import Any, List, Tuple, Dict
+from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.workbook.workbook import Workbook
 
 RANKS = ["A","K","Q","J","T","9","8","7","6","5","4","3","2"]
