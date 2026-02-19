@@ -94,8 +94,15 @@ class PokerTrainerUI:
             command=self.open_situation_practice,
             width=24,
         )
+        self.btn_top_yokosawa = tk.Button(
+            self.top_screen_frame,
+            text="ヨコサワ式（未実装）",
+            command=self.start_yokosawa_open,
+            width=24,
+        )
         self.btn_top_difficulty.pack(side=tk.LEFT, padx=5)
         self.btn_top_situation.pack(side=tk.LEFT, padx=5)
+        self.btn_top_yokosawa.pack(side=tk.LEFT, padx=5)
 
         # 難易度選択画面
         self.difficulty_screen_frame = tk.Frame(self.menu_container)
@@ -364,6 +371,12 @@ class PokerTrainerUI:
             return
         selected_kinds = [kind for kind, var in self.var_kind_checks.items() if var.get()]
         self.controller.start_juego_with_kinds(selected_kinds)
+
+    def start_yokosawa_open(self) -> None:
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        self.controller.start_yokosawa_open()
 
     def on_answer(self, action: str) -> None:
         if self.controller is None:
