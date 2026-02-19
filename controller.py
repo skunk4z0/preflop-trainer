@@ -42,7 +42,6 @@ class GameController:
         self._telemetry_obj: Optional[Telemetry] = None
 
         # 画面遷移/出題条件
-        self.mode: str = "difficulty"  # "difficulty" or "kind"
         self.selected_difficulty: Optional[Difficulty] = None
         self.selected_kinds: list[str] = []
 
@@ -85,20 +84,16 @@ class GameController:
         self.new_question()
         
 
-    def open_top(self) -> None:
-        self.mode = "difficulty"
+    def open_top(self) -> None: 
         self._ui_call("show_top_screen")
 
     def open_difficulty_practice(self) -> None:
-        self.mode = "difficulty"
         self._ui_call("show_difficulty_screen")
 
     def open_situation_practice(self) -> None:
-        self.mode = "kind"
         self._ui_call("show_situation_screen")
 
     def select_difficulty(self, difficulty: Difficulty) -> None:
-        self.mode = "difficulty"
         self.selected_difficulty = difficulty
         self.selected_kinds = config.kinds_for_difficulty(difficulty.name)
         self._ui_call(
@@ -120,7 +115,6 @@ class GameController:
         self.new_question()
 
     def start_juego_with_kinds(self, kinds: list[str]) -> None:
-        self.mode = "kind"
         self.selected_difficulty = None
 
         normalized: list[str] = []
@@ -143,7 +137,6 @@ class GameController:
 
     def reset_state(self) -> None:
         self.engine.reset_state()
-        self.mode = "difficulty"
         self.selected_difficulty = None
         self.selected_kinds = []
         self._last_answer_mode = ""
