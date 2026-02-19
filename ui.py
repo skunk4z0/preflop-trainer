@@ -333,11 +333,7 @@ class PokerTrainerUI:
         if self.controller is None:
             self.show_text("内部エラー：Controllerが未接続です")
             return
-        level_map = {
-            "BEGINNER": config.difficulty_short_label("BEGINNER"),
-            "INTERMEDIATE": config.difficulty_short_label("INTERMEDIATE"),
-            "ADVANCED": config.difficulty_short_label("ADVANCED"),
-        }
+            
         from core.models import Difficulty
 
         enum_map = {
@@ -349,7 +345,7 @@ class PokerTrainerUI:
         if key not in enum_map:
             self.show_text(f"未知の難易度です: {difficulty_name}")
             return
-        self.show_text(f"{level_map[key]}を選択しました。")
+        self.show_text(f"{config.difficulty_short_label(key)}を選択しました。")
         self.controller.select_difficulty(enum_map[key])
 
     def start_selected_kinds(self) -> None:
@@ -364,24 +360,6 @@ class PokerTrainerUI:
             return
         selected_kinds = [kind for kind, var in self.var_kind_checks.items() if var.get()]
         self.controller.start_juego_with_kinds(selected_kinds)
-
-    def start_juego_beginner(self) -> None:
-        if self.controller is None:
-            self.show_text("内部エラー：Controllerが未接続です")
-            return
-        self.controller.start_juego_beginner()
-
-    def start_juego_intermediate(self) -> None:
-        if self.controller is None:
-            self.show_text("内部エラー：Controllerが未接続です")
-            return
-        self.controller.start_juego_intermediate()
-
-    def start_juego_advanced(self) -> None:
-        if self.controller is None:
-            self.show_text("内部エラー：Controllerが未接続です")
-            return
-        self.controller.start_juego_advanced()
 
     def on_answer(self, action: str) -> None:
         if self.controller is None:
@@ -566,139 +544,6 @@ class PokerTrainerUI:
     # -------------------------
     # Range popup
     # -------------------------
-    def show_range_grid_popup(
-        self,
-        title: str,
-        grid_cells,
-        highlight_rc=None,
-        info_text: str = "",
-        on_next=None,
-    ) -> None:
-        self.close_range_grid_popup()
-
-        win = tk.Toplevel(self.root)
-        self._range_popup = win
-
-        def _on_close():
-            self._range_popup = None
-            self._tk_call("range popup destroy", win.destroy)
-
-        win.protocol("WM_DELETE_WINDOW", _on_close)
-        win.title(title)
-
-        # ===== スケール（70%） =====
-        SCALE = 0.7
-        cell_size = max(18, int(46 * SCALE))
-        pad = max(1, int(2 * SCALE))
-        cell_font_size = max(7, int(9 * SCALE))
-
-        grid_px = 13 * cell_size
-
-        header = ttk.Frame(win)
-        header.pack(fill="x", padx=10, pady=10)
-
-        topbar = ttk.Frame(header)
-        topbar.pack(fill="x")
-
-        ttk.Label(topbar, text=title, font=("", 12, "bold")).pack(side="left", anchor="w")
-
-        btns = ttk.Frame(topbar)
-        btns.pack(side="right")
-
-        if callable(on_next):
-
-            def _next_and_close():
-                _on_close()
-                try:
-                    on_next()
-                except Exception as e:
-                    logger.exception("[UI] on_next failed: %s", e)
-                    try:
-                        messagebox.showerror("Error", f"Next処理でエラーが発生しました:\n{e}")
-                    except tk.TclError:
-                        pass
-
-            ttk.Button(btns, text="Next", command=_next_and_close).pack(side="right", padx=(6, 0))
-
-        if info_text:
-            ttk.Label(header, text=info_text, wraplength=620, justify="left").pack(anchor="w", pady=(8, 0))
-
-        body = ttk.Frame(win)
-        body.pack(padx=10, pady=10)
-
-        canvas = tk.Canvas(body, width=grid_px, height=grid_px, highlightthickness=0, bg="#f0f0f0")
-        canvas.pack()
-
-        for r in range(13):
-            for c in range(13):
-                cell = grid_cells[r][c]
-                x0 = c * cell_size
-                y0 = r * cell_size
-                x1 = x0 + cell_size
-                y1 = y0 + cell_size
-
-                fill = f"#{cell.bg_rgb}"
-                canvas.create_rectangle(
-                    x0 + pad,
-                    y0 + pad,
-                    x1 - pad,
-                    y1 - pad,
-                    fill=fill,
-                    outline="#c0c0c0",
-                )
-
-                label = (cell.label or "").strip()
-                if label:
-                    fg = _contrast_text_color(cell.bg_rgb)
-                    canvas.create_text(
-                        (x0 + x1) / 2,
-                        (y0 + y1) / 2,
-                        text=label,
-                        fill=fg,
-                        font=("", cell_font_size),
-                    )
-
-        if highlight_rc is not None:
-            hr, hc = highlight_rc
-            x0 = hc * cell_size
-            y0 = hr * cell_size
-            x1 = x0 + cell_size
-            y1 = y0 + cell_size
-            canvas.create_rectangle(x0 + 1, y0 + 1, x1 - 1, y1 - 1, outline="#ff0000", width=3)
-
-        win.update_idletasks()
-        req_w = win.winfo_reqwidth()
-        req_h = win.winfo_reqheight()
-
-        try:
-            self.root.update_idletasks()
-            rx = self.root.winfo_x()
-            ry = self.root.winfo_y()
-            rw = self.root.winfo_width()
-        except tk.TclError as e:
-            logger.debug("[UI] root geometry not available: %s", e)
-            rx, ry, rw = 0, 0, 0
-
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-
-        x = rx + rw + 10
-        if x + req_w > sw:
-            x = max(0, sw - req_w - 10)
-
-        y = ry
-        if y + req_h > sh:
-            y = max(0, sh - req_h - 60)
-
-        win.geometry(f"{req_w}x{req_h}+{x}+{y}")
-
-        try:
-            win.lift()
-            win.attributes("-topmost", True)
-            win.after(200, lambda: win.attributes("-topmost", False))
-        except tk.TclError as e:
-            logger.debug("[UI] lift/topmost failed: %s", e)
-
     def close_range_grid_popup(self) -> None:
         win = getattr(self, "_range_popup", None)
         if win is not None:
