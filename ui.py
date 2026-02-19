@@ -365,24 +365,6 @@ class PokerTrainerUI:
         selected_kinds = [kind for kind, var in self.var_kind_checks.items() if var.get()]
         self.controller.start_juego_with_kinds(selected_kinds)
 
-    def start_juego_beginner(self) -> None:
-        if self.controller is None:
-            self.show_text("内部エラー：Controllerが未接続です")
-            return
-        self.controller.start_juego_beginner()
-
-    def start_juego_intermediate(self) -> None:
-        if self.controller is None:
-            self.show_text("内部エラー：Controllerが未接続です")
-            return
-        self.controller.start_juego_intermediate()
-
-    def start_juego_advanced(self) -> None:
-        if self.controller is None:
-            self.show_text("内部エラー：Controllerが未接続です")
-            return
-        self.controller.start_juego_advanced()
-
     def on_answer(self, action: str) -> None:
         if self.controller is None:
             self.show_text("内部エラー：Controllerが未接続です")
