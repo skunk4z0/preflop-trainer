@@ -83,27 +83,7 @@ class GameController:
     def start_yokosawa_open(self) -> None:
         self.engine.start_yokosawa_open()
         self.new_question()
-
-    def start_juego_beginner(self) -> None:
-        self.mode = "difficulty"
-        self.selected_difficulty = Difficulty.BEGINNER
-        self.selected_kinds = config.kinds_for_difficulty(Difficulty.BEGINNER.name)
-        self.engine.start_juego(Difficulty.BEGINNER, selected_kinds=self.selected_kinds)
-        self.new_question()
-
-    def start_juego_intermediate(self) -> None:
-        self.mode = "difficulty"
-        self.selected_difficulty = Difficulty.INTERMEDIATE
-        self.selected_kinds = config.kinds_for_difficulty(Difficulty.INTERMEDIATE.name)
-        self.engine.start_juego(Difficulty.INTERMEDIATE, selected_kinds=self.selected_kinds)
-        self.new_question()
-
-    def start_juego_advanced(self) -> None:
-        self.mode = "difficulty"
-        self.selected_difficulty = Difficulty.ADVANCED
-        self.selected_kinds = config.kinds_for_difficulty(Difficulty.ADVANCED.name)
-        self.engine.start_juego(Difficulty.ADVANCED, selected_kinds=self.selected_kinds)
-        self.new_question()
+        
 
     def open_top(self) -> None:
         self.mode = "difficulty"
