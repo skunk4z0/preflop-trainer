@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import traceback
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,6 +13,24 @@ from core.models import Difficulty, ProblemType, OpenRaiseProblemContext
 from core.telemetry import Telemetry
 
 logger = logging.getLogger("poker_trainer.controller")
+
+# Responsibility boundary (must keep):
+# - UI: rendering/input only. UI must not touch Engine/Repo/Judge directly.
+# - Controller: orchestrates state/progression and Engine calls.
+# - Controller must never manipulate Tk widgets directly; call UI methods via `_ui_call(...)` only.
+
+
+@dataclass
+class ControllerState:
+    # A) session settings
+    selected_difficulty: Optional[Difficulty] = None
+    selected_kinds: list[str] = field(default_factory=list)
+    # B) in-progress state (follow-up)
+    pending_followup_choices: Optional[list[float]] = None
+    pending_followup_prompt: Optional[str] = None
+    # C) UI display helpers (for telemetry/UI sync)
+    current_answer_mode: str = ""
+    current_header_text: str = ""
 
 
 class GameController:
@@ -33,17 +52,10 @@ class GameController:
         self.ui = ui
         self.engine = engine
         self.enable_debug = bool(enable_debug)
-
-        # telemetry用：直近の表示状態
-        self._last_answer_mode: str = ""
-        self._last_header_text: str = ""
+        self.state = ControllerState()
 
         # 遅延生成（init差分を小さくする）
         self._telemetry_obj: Optional[Telemetry] = None
-
-        # 画面遷移/出題条件
-        self.selected_difficulty: Optional[Difficulty] = None
-        self.selected_kinds: list[str] = []
 
     # -------------------------
     # Small helpers
@@ -94,28 +106,38 @@ class GameController:
         self._ui_call("show_situation_screen")
 
     def select_difficulty(self, difficulty: Difficulty) -> None:
-        self.selected_difficulty = difficulty
-        self.selected_kinds = config.kinds_for_difficulty(difficulty.name)
+        self.state.selected_difficulty = difficulty
+        self.state.selected_kinds = config.kinds_for_difficulty(difficulty.name)
         self._ui_call(
             "show_difficulty_confirm_screen",
             difficulty_label=config.difficulty_short_label(difficulty.name),
-            selected_kinds=self.selected_kinds,
+            selected_kinds=self.state.selected_kinds,
         )
 
+    def select_difficulty_by_name(self, difficulty_name: str) -> None:
+        key = str(difficulty_name or "").strip().upper()
+        try:
+            difficulty = Difficulty[key]
+        except KeyError:
+            self._ui_call("show_text", f"未知の難易度です: {difficulty_name}")
+            return
+        self.select_difficulty(difficulty)
+
     def start_selected_kinds(self) -> None:
-        if self.selected_difficulty is None:
+        if self.state.selected_difficulty is None:
             self._ui_call("show_text", "難易度を選択してください（初級/中級/上級）")
             return
-        if not self.selected_kinds:
+        if not self.state.selected_kinds:
             self._ui_call("show_text", "選択中の難易度に kind が定義されていません")
             return
 
-        self.engine.start_juego(self.selected_difficulty, selected_kinds=self.selected_kinds)
+        self.reset_for_new_session()
+        self.engine.start_juego(self.state.selected_difficulty, selected_kinds=self.state.selected_kinds)
         self._ui_call("show_quiz_screen")
         self.new_question()
 
     def start_juego_with_kinds(self, kinds: list[str]) -> None:
-        self.selected_difficulty = None
+        self.state.selected_difficulty = None
 
         normalized: list[str] = []
         seen: set[str] = set()
@@ -125,22 +147,59 @@ class GameController:
                 continue
             seen.add(key)
             normalized.append(key)
-        self.selected_kinds = normalized
+        self.state.selected_kinds = normalized
 
-        if not self.selected_kinds:
+        if not self.state.selected_kinds:
             self._ui_call("show_text", "kindを1つ以上選択してください")
             return
 
-        self.engine.start_juego(Difficulty.BEGINNER, selected_kinds=self.selected_kinds)
+        self.reset_for_new_session()
+        self.engine.start_juego(Difficulty.BEGINNER, selected_kinds=self.state.selected_kinds)
         self._ui_call("show_quiz_screen")
         self.new_question()
 
-    def reset_state(self) -> None:
+    def reset_to_top(self) -> None:
         self.engine.reset_state()
-        self.selected_difficulty = None
-        self.selected_kinds = []
-        self._last_answer_mode = ""
-        self._last_header_text = ""
+        self.state.selected_difficulty = None
+        self.state.selected_kinds = []
+        self.reset_for_new_session()
+
+    def reset_for_new_session(self) -> None:
+        self.state.current_answer_mode = ""
+        self.state.current_header_text = ""
+        self.state.pending_followup_choices = None
+        self.state.pending_followup_prompt = None
+
+    def reset_for_new_question(self) -> None:
+        self.state.pending_followup_choices = None
+        self.state.pending_followup_prompt = None
+        # 前回のレンジ表ポップアップが残っていたら閉じる
+        self._ui_call("close_range_grid_popup")
+        # 直前のロックやfollow-up UI残骸を掃除
+        self._ui_call("set_answer_buttons_locked", False)
+        self._ui_call("set_next_button_visible", False)
+        self._ui_call("hide_followup_size_buttons")
+
+    def reset_state(self) -> None:
+        # Backward-compatible entrypoint used by UI.go_to_start()
+        self.reset_to_top()
+
+    def go_to_start_keep_settings(self) -> None:
+        # Keep selected difficulty/kinds, but clear in-progress engine/session state.
+        self.engine.reset_state()
+        self.reset_for_new_session()
+        self.reset_for_new_question()
+        if self.state.selected_difficulty is None:
+            # difficulty無し（カスタム kinds の可能性を含む）は安全にTOPへ戻す
+            self._ui_call("show_top_screen")
+            return
+        if not self.state.selected_kinds:
+            self.state.selected_kinds = config.kinds_for_difficulty(self.state.selected_difficulty.name)
+        self._ui_call(
+            "show_difficulty_confirm_screen",
+            difficulty_label=config.difficulty_short_label(self.state.selected_difficulty.name),
+            selected_kinds=self.state.selected_kinds,
+        )
 
     def _infer_problem_type_from_ctx(
         self,
@@ -220,13 +279,7 @@ class GameController:
     # Next question
     # -------------------------
     def new_question(self) -> None:
-        # 前回のレンジ表ポップアップが残っていたら閉じる
-        self._ui_call("close_range_grid_popup")
-
-        # 直前のロックやfollow-up UI残骸を掃除
-        self._ui_call("unlock_all_answer_buttons")
-        self._ui_call("hide_next_button")
-        self._ui_call("hide_followup_size_buttons")
+        self.reset_for_new_question()
 
         # ヨコサワ（未実装扱い）
         if self.engine.current_problem == ProblemType.YOKOSAWA_OPEN:
@@ -247,13 +300,13 @@ class GameController:
         # 1) normalize return payload (GeneratedQuestion / SubmitResult 両対応)
         ctx = self._extract_ctx(ret)
         problem_type = self._extract_problem_type(ret, ctx)
-        self._last_answer_mode = self._resolve_answer_mode(ret, problem_type, ctx)
-        self._last_header_text = self._resolve_header_text(ret)
+        self.state.current_answer_mode = self._resolve_answer_mode(ret, problem_type, ctx)
+        self.state.current_header_text = self._resolve_header_text(ret)
 
         # 2) apply normalized data to UI
         self._apply_context_to_ui(ctx)
-        self._ui_call("set_answer_mode", self._last_answer_mode)
-        self._ui_call("show_text", self._last_header_text)
+        self._ui_call("set_answer_mode", self.state.current_answer_mode)
+        self._ui_call("show_text", self.state.current_header_text)
 
         # Telemetry: question_shown
         try:
@@ -261,8 +314,8 @@ class GameController:
                 self._telemetry().on_question_shown(
                     engine=self.engine,
                     ctx=ctx,
-                    answer_mode=self._last_answer_mode,
-                    header_text=self._last_header_text,
+                    answer_mode=self.state.current_answer_mode,
+                    header_text=self.state.current_header_text,
                 )
         except Exception as e:
             logger.warning("[CTRL] telemetry question_shown failed: %s", e, exc_info=True)
@@ -289,7 +342,7 @@ class GameController:
                 self._telemetry().on_answer_submitted(
                     engine=self.engine,
                     ctx=ctx,
-                    answer_mode=self._last_answer_mode,
+                    answer_mode=self.state.current_answer_mode,
                     user_action=user_action or "",
                     res=res,
                 )
@@ -301,24 +354,30 @@ class GameController:
 
         # 2) follow-up UIの掃除（必要なときだけ）
         if getattr(res, "hide_followup_buttons", False):
+            self.state.pending_followup_choices = None
+            self.state.pending_followup_prompt = None
             self._ui_call("hide_followup_size_buttons")
 
         # 3) follow-up 表示が最優先（このとき Next は出さない）
         if getattr(res, "show_followup_buttons", False):
-            self._ui_call("hide_next_button")
+            self._ui_call("set_next_button_visible", False)
             choices = res.followup_choices or [2, 2.25, 2.5, 3]
+            self.state.pending_followup_choices = [float(v) for v in choices]
+            self.state.pending_followup_prompt = res.followup_prompt
             self._ui_call(
                 "show_followup_size_buttons",
                 choices=choices,
                 prompt=res.followup_prompt,
             )
             return
+        self.state.pending_followup_choices = None
+        self.state.pending_followup_prompt = None
 
         # 4) Next表示
         if getattr(res, "show_next_button", False):
-            self._ui_call("show_next_button")
+            self._ui_call("set_next_button_visible", True)
         else:
-            self._ui_call("hide_next_button")
+            self._ui_call("set_next_button_visible", False)
 
         # 5) 不正解ならレンジ表（follow-up不正解も含む）
         if res.is_correct is False and self.engine.context is not None:
@@ -343,8 +402,6 @@ class GameController:
         follow-up不正解のときは override_reason に res.text を渡す。
         """
         try:
-            if not hasattr(self.ui, "show_range_grid_popup"):
-                return
             if judge_result is None:
                 return
 

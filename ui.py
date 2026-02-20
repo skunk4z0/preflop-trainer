@@ -72,7 +72,11 @@ class PokerTrainerUI:
         self.nav_frame = tk.Frame(self.top)
         self.nav_frame.pack(fill=tk.X)
         self.btn_home = tk.Button(self.nav_frame, text="TOPへ戻る", command=self.go_to_start)
-        self.btn_home.pack(side=tk.LEFT, padx=5)
+        self.btn_home_keep_settings = tk.Button(
+            self.nav_frame,
+            text="Startへ戻る（設定保持）",
+            command=self.on_go_to_start_keep_settings,
+        )
         self.btn_next = tk.Button(self.nav_frame, text="Next", command=self.on_next)
         self.btn_next.pack(side=tk.LEFT, padx=5)
         self.btn_next.pack_forget()
@@ -241,6 +245,7 @@ class PokerTrainerUI:
     # 依存性注入（main.pyから呼ぶ）
     # -------------------------
     def attach_controller(self, controller: Any) -> None:
+        # UI -> domain access must go through controller methods only.
         self.controller = controller
 
     # -------------------------
@@ -262,6 +267,34 @@ class PokerTrainerUI:
             self._tk_call("menu screen pack_forget", w.pack_forget)
         frame.pack(fill=tk.X)
 
+    def set_nav_buttons_visibility(self, *, show_home: bool, show_keep_settings: bool) -> None:
+        next_visible = self.btn_next.winfo_manager() != ""
+        if next_visible:
+            self.btn_next.pack_forget()
+
+        self.btn_home.pack_forget()
+        self.btn_home_keep_settings.pack_forget()
+
+        if show_home:
+            self.btn_home.pack(side=tk.LEFT, padx=5)
+        if show_keep_settings:
+            self.btn_home_keep_settings.pack(side=tk.LEFT, padx=5)
+
+        if next_visible:
+            self.btn_next.pack(side=tk.LEFT, padx=5)
+
+    def close_cards(self) -> None:
+        for lbl in getattr(self, "card_labels", []):
+            try:
+                lbl.configure(image=None, text="")
+                lbl.image = None
+            except Exception:
+                pass
+        if hasattr(self, "var_hand"):
+            self.var_hand.set("")
+        if hasattr(self, "var_pos"):
+            self.var_pos.set("")
+
     def _apply_start_screen_ui(self) -> None:
         # UIだけを「開始前」状態に戻す
         self.close_range_grid_popup()
@@ -269,26 +302,25 @@ class PokerTrainerUI:
         self.hide_followup_size_buttons()
         self._tk_call("hide ans_frame on menu", self.ans_frame.pack_forget)
         self._switch_menu_screen(self.top_screen_frame)
+        self.set_nav_buttons_visibility(show_home=False, show_keep_settings=False)
 
         # カード/入力欄/説明をクリア
-        for lbl in self.card_labels:
-            lbl.configure(image="", text="")
-            lbl.image = None
-
-        self.var_hand.set("")
-        self.var_pos.set("")
+        self.close_cards()
         self.show_text("練習モードを選択してください。")
 
     def show_top_screen(self) -> None:
         self._switch_menu_screen(self.top_screen_frame)
+        self.set_nav_buttons_visibility(show_home=False, show_keep_settings=False)
         self.show_text("練習モードを選択してください。")
 
     def show_difficulty_screen(self) -> None:
         self._switch_menu_screen(self.difficulty_screen_frame)
+        self.set_nav_buttons_visibility(show_home=True, show_keep_settings=False)
         self.show_text("難易度を選択してください（初級/中級/上級）")
 
     def show_difficulty_confirm_screen(self, difficulty_label: str, selected_kinds: list[str]) -> None:
         self._switch_menu_screen(self.confirm_screen_frame)
+        self.set_nav_buttons_visibility(show_home=True, show_keep_settings=False)
         self.lbl_confirm_title.configure(text=f"難易度の内容確認（{difficulty_label}）")
         lines = [f"・{config.kind_short_label(k)}" for k in selected_kinds]
         self.var_confirm_kinds.set("\n".join(lines) if lines else "・(kind未定義)")
@@ -296,24 +328,34 @@ class PokerTrainerUI:
 
     def show_situation_screen(self) -> None:
         self._switch_menu_screen(self.situation_screen_frame)
+        self.set_nav_buttons_visibility(show_home=True, show_keep_settings=False)
         for kind, var in self.var_kind_checks.items():
             var.set(kind == "OR")
         self.show_text("kindを1つ以上選んで Start を押してください。")
 
     def show_quiz_screen(self) -> None:
         self._tk_call("menu screen hide", self.menu_container.pack_forget)
+        self.set_nav_buttons_visibility(show_home=True, show_keep_settings=True)
         if self.ans_frame.winfo_manager() == "":
             self._tk_call("show ans_frame on quiz", lambda: self.ans_frame.pack(padx=10, pady=5))
         if self.top.winfo_manager() == "":
             self.top.pack(padx=10, pady=10, fill=tk.X)
 
     def go_to_start(self) -> None:
+        self.close_cards()
         # Controller状態をリセット（あれば）
         if self.controller is not None and hasattr(self.controller, "reset_state"):
             self.controller.reset_state()
         if self.menu_container.winfo_manager() == "":
             self.menu_container.pack(fill=tk.X, pady=(8, 0))
         self._apply_start_screen_ui()
+
+    def on_go_to_start_keep_settings(self) -> None:
+        self.close_cards()
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        self.controller.go_to_start_keep_settings()
 
     # -------------------------
     # UI -> Controller
@@ -340,24 +382,8 @@ class PokerTrainerUI:
         if self.controller is None:
             self.show_text("内部エラー：Controllerが未接続です")
             return
-        level_map = {
-            "BEGINNER": config.difficulty_short_label("BEGINNER"),
-            "INTERMEDIATE": config.difficulty_short_label("INTERMEDIATE"),
-            "ADVANCED": config.difficulty_short_label("ADVANCED"),
-        }
-        from core.models import Difficulty
-
-        enum_map = {
-            "BEGINNER": Difficulty.BEGINNER,
-            "INTERMEDIATE": Difficulty.INTERMEDIATE,
-            "ADVANCED": Difficulty.ADVANCED,
-        }
-        key = str(difficulty_name or "").strip().upper()
-        if key not in enum_map:
-            self.show_text(f"未知の難易度です: {difficulty_name}")
-            return
-        self.show_text(f"{level_map[key]}を選択しました。")
-        self.controller.select_difficulty(enum_map[key])
+        # Boundary: UI passes user input only; Controller owns validation/mapping.
+        self.controller.select_difficulty_by_name(difficulty_name)
 
     def start_selected_kinds(self) -> None:
         if self.controller is None:
@@ -464,12 +490,24 @@ class PokerTrainerUI:
         ):
             self._set_button_state_if_exists(b, state=tk.NORMAL)
 
+    def set_answer_buttons_locked(self, locked: bool) -> None:
+        if locked:
+            self.lock_all_answer_buttons()
+            return
+        self.unlock_all_answer_buttons()
+
     def hide_next_button(self) -> None:
-        self.btn_next.pack_forget()
+        self.set_next_button_visible(False)
 
     def show_next_button(self) -> None:
-        if self.btn_next.winfo_manager() == "":
-            self.btn_next.pack(side=tk.LEFT, padx=5)
+        self.set_next_button_visible(True)
+
+    def set_next_button_visible(self, visible: bool) -> None:
+        if visible:
+            if self.btn_next.winfo_manager() == "":
+                self.btn_next.pack(side=tk.LEFT, padx=5)
+            return
+        self.btn_next.pack_forget()
 
     def deal_cards(self, hole_cards: tuple[str, str]) -> None:
         c1, c2 = hole_cards

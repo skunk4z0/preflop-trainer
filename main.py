@@ -28,14 +28,10 @@ def _ensure_final_tags_exists() -> None:
 
 
 def _init_debug_logging_from_env() -> None:
-    log_path = os.getenv("POKER_DEBUG_LOG")
-    if not log_path:
-        return
-
+    level_name = os.getenv("POKER_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
     kwargs = {
-        "level": logging.DEBUG,
-        "filename": log_path,
-        "filemode": "a",
+        "level": level,
         "format": "%(asctime)s %(levelname)s [%(name)s] %(message)s",
     }
     try:
@@ -56,8 +52,6 @@ def _init_debug_logging_from_env() -> None:
 def main() -> None:
     _ensure_final_tags_exists()
     _init_debug_logging_from_env()
-    if not os.getenv("POKER_DEBUG_LOG"):
-        logging.basicConfig(level=logging.INFO)
 
     # ---- Repo (JSON only) ----
     repo = JsonRangeRepository(FINAL_TAGS_JSON_PATH)
