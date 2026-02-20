@@ -3,13 +3,17 @@ from __future__ import annotations
 
 import logging
 import traceback
+import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from uuid import uuid4
 
 import config
 from core.engine import PokerEngine, SubmitResult
 from core.models import Difficulty, ProblemType, OpenRaiseProblemContext
+from core.progress_store import ProgressStore
 from core.telemetry import Telemetry
 
 logger = logging.getLogger("poker_trainer.controller")
@@ -31,6 +35,7 @@ class ControllerState:
     # C) UI display helpers (for telemetry/UI sync)
     current_answer_mode: str = ""
     current_header_text: str = ""
+    current_session_id: str = field(default_factory=lambda: str(uuid4()))
 
 
 class GameController:
@@ -48,10 +53,17 @@ class GameController:
     - データアクセス（= repo の責務）
     """
 
-    def __init__(self, ui, engine: PokerEngine, enable_debug: bool = False):
+    def __init__(
+        self,
+        ui,
+        engine: PokerEngine,
+        enable_debug: bool = False,
+        progress_store: Optional[ProgressStore] = None,
+    ):
         self.ui = ui
         self.engine = engine
         self.enable_debug = bool(enable_debug)
+        self.progress_store = progress_store
         self.state = ControllerState()
 
         # 遅延生成（init差分を小さくする）
@@ -169,6 +181,7 @@ class GameController:
         self.state.current_header_text = ""
         self.state.pending_followup_choices = None
         self.state.pending_followup_prompt = None
+        self.state.current_session_id = str(uuid4())
 
     def reset_for_new_question(self) -> None:
         self.state.pending_followup_choices = None
@@ -310,7 +323,7 @@ class GameController:
 
         # Telemetry: question_shown
         try:
-            if ctx is not None:
+            if config.ENABLE_TELEMETRY and ctx is not None:
                 self._telemetry().on_question_shown(
                     engine=self.engine,
                     ctx=ctx,
@@ -335,10 +348,12 @@ class GameController:
             self._ui_call("show_text", "[BUG] engine.submit() returned None. Check engine.submit() return paths.")
             return
 
+        self._append_learning_attempt(user_action=user_action, res=res)
+
         # Telemetry: answer_submitted（follow-upも含めて記録）
         try:
             ctx = getattr(self.engine, "context", None)
-            if ctx is not None:
+            if config.ENABLE_TELEMETRY and ctx is not None:
                 self._telemetry().on_answer_submitted(
                     engine=self.engine,
                     ctx=ctx,
@@ -476,3 +491,73 @@ class GameController:
             logger.warning("[CTRL] show_range_grid_popup failed: %s", e)
             if self.enable_debug:
                 logger.debug("Traceback:\n%s", traceback.format_exc())
+
+    def _resolve_kind_for_progress(self, ctx: Any, judge_result: Any) -> str:
+        dbg = getattr(judge_result, "debug", None) or {}
+        if isinstance(dbg, dict):
+            kind = str(dbg.get("kind") or "").strip()
+            if kind:
+                return kind
+        kind_from_ctx = str(getattr(ctx, "kind", "") or "").strip()
+        if kind_from_ctx:
+            return kind_from_ctx
+        cp = self.engine.current_problem
+        if cp == ProblemType.JUEGO_OR:
+            return "OR"
+        if cp == ProblemType.JUEGO_OR_SB:
+            return "OR_SB"
+        if cp == ProblemType.JUEGO_ROL:
+            return "ROL"
+        if cp == ProblemType.JUEGO_3BET:
+            return "CC_3BET"
+        return "UNKNOWN"
+
+    def _append_learning_attempt(self, user_action: Optional[str], res: SubmitResult) -> None:
+        if self.progress_store is None:
+            return
+        if res.is_correct is None:
+            return
+
+        ctx = getattr(self.engine, "context", None)
+        if ctx is None:
+            return
+
+        jr = getattr(res, "judge_result", None)
+        dbg = getattr(jr, "debug", None) or {}
+        if not isinstance(dbg, dict):
+            dbg = {}
+
+        kind = self._resolve_kind_for_progress(ctx=ctx, judge_result=jr)
+        position = str(getattr(ctx, "excel_position_key", None) or getattr(ctx, "position", "") or "").strip()
+        hand = str(getattr(ctx, "excel_hand_key", "") or "").strip()
+        expected_action = str(
+            dbg.get("correct_action")
+            or dbg.get("expected_action")
+            or getattr(jr, "action", "")
+            or ""
+        ).strip()
+        if not expected_action:
+            expected_action = "UNKNOWN"
+        expected_raise_size_bb = dbg.get("expected_raise_size_bb", None)
+        if not isinstance(expected_raise_size_bb, (int, float)):
+            expected_raise_size_bb = None
+
+        difficulty = self.state.selected_difficulty.name if self.state.selected_difficulty is not None else None
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": self.state.current_session_id,
+            "difficulty": difficulty,
+            "selected_kinds_json": json.dumps(self.state.selected_kinds, ensure_ascii=False),
+            "kind": kind or "UNKNOWN",
+            "position": position or "?",
+            "hand": hand or "?",
+            "user_action": str(user_action or ""),
+            "correct_action": expected_action,
+            "is_correct": 1 if bool(res.is_correct) else 0,
+            "expected_raise_size_bb": float(expected_raise_size_bb) if expected_raise_size_bb is not None else None,
+            "extra_json": "{}",
+        }
+        try:
+            self.progress_store.append_attempt(record)
+        except Exception:
+            logger.exception("[CTRL] progress append failed")

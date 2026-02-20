@@ -5,17 +5,18 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
-from config import FINAL_TAGS_JSON_PATH
+import config
 from controller import GameController
 from core.engine import PokerEngine
 from core.generator import JuegoProblemGenerator
+from core.progress_store import ProgressStore
 from juego_judge import JUEGOJudge
 from json_range_repository import JsonRangeRepository
 from ui import PokerTrainerUI
 
 
 def _ensure_final_tags_exists() -> None:
-    p = Path(FINAL_TAGS_JSON_PATH)
+    p = Path(config.FINAL_TAGS_JSON_PATH)
     if not p.exists():
         msg = (
             "[FATAL] final_tags.json not found.\n"
@@ -54,7 +55,7 @@ def main() -> None:
     _init_debug_logging_from_env()
 
     # ---- Repo (JSON only) ----
-    repo = JsonRangeRepository(FINAL_TAGS_JSON_PATH)
+    repo = JsonRangeRepository(config.FINAL_TAGS_JSON_PATH)
 
     # ---- Judge ----
     judge = JUEGOJudge(repo)
@@ -69,11 +70,14 @@ def main() -> None:
 
     # ---- Core Engine ----
     engine = PokerEngine(generator=gen, juego_judge=judge, enable_debug=False)
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    progress_store = ProgressStore(config.LEARNING_DB_PATH)
+    progress_store.ensure_schema()
 
     # ---- UI / Controller ----
     root = tk.Tk()
     ui = PokerTrainerUI(root)
-    controller = GameController(ui=ui, engine=engine, enable_debug=False)
+    controller = GameController(ui=ui, engine=engine, enable_debug=False, progress_store=progress_store)
     ui.controller = controller
 
     root.mainloop()

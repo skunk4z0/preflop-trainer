@@ -24,6 +24,7 @@ tools/out/
 # --- app runtime data (local) ---
 data/events.jsonl
 data/user_id.txt
+data/learning.db
 
 # --- patches ---
 *.patch
