@@ -13,6 +13,31 @@ from .models import Difficulty, GeneratedQuestion, OpenRaiseProblemContext, Prob
 
 logger = logging.getLogger("poker_trainer.core.generator")
 
+_BROADWAY_RANKS = {"A", "K", "Q", "J", "T"}
+_VERY_LOW_RANKS = {"2", "3", "4", "5"}
+_SUITS = ["s", "h", "d", "c"]
+
+
+def _or_hand_weight(hand_key: str) -> float:
+    hand = (hand_key or "").strip().upper()
+    if len(hand) < 2:
+        return 1.0
+
+    r1, r2 = hand[0], hand[1]
+    suffix = hand[2].lower() if len(hand) >= 3 else ""
+    is_pair = (r1 == r2)
+    has_broadway = (r1 in _BROADWAY_RANKS) or (r2 in _BROADWAY_RANKS)
+    both_very_low = (r1 in _VERY_LOW_RANKS) and (r2 in _VERY_LOW_RANKS)
+
+    if suffix == "o" and (not is_pair) and (not has_broadway) and both_very_low:
+        return 0.2
+    return 1.0
+
+
+def _weighted_or_hand_choice(population: list[str]) -> str:
+    weights = [_or_hand_weight(hand) for hand in population]
+    return random.choices(population, weights=weights, k=1)[0]
+
 
 class JuegoProblemGenerator:
     """
@@ -31,6 +56,7 @@ class JuegoProblemGenerator:
         suits = ["s", "h", "d", "c"]
         ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
         self._deck = [r + s for r, s in itertools.product(ranks, suits)]
+        self._or_hand_candidates = self._build_all_hand_keys()
 
         # main.py で repo.list_positions("CC_3BET") を渡す想定（=最終JSONのposキー）
         self._positions_3bet = positions_3bet or []
@@ -143,7 +169,8 @@ class JuegoProblemGenerator:
         )
 
     def _generate_or_problem_beginner(self) -> OpenRaiseProblemContext:
-        card1, card2 = self._rng.sample(self._deck, 2)
+        chosen_hand = _weighted_or_hand_choice(self._or_hand_candidates)
+        card1, card2 = self._cards_from_hand_key(chosen_hand)
         position = self._rng.choice(["EP", "MP", "CO", "BTN"])
         loose = self._rng.choice([True, False])
 
@@ -207,6 +234,37 @@ class JuegoProblemGenerator:
             excel_position_key=position,
             limpers=1,
         )
+
+    def _build_all_hand_keys(self) -> list[str]:
+        ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
+        hands: list[str] = []
+        for i, high_rank in enumerate(ranks):
+            hands.append(high_rank + high_rank)
+            for low_rank in ranks[i + 1 :]:
+                hands.append(high_rank + low_rank + "s")
+                hands.append(high_rank + low_rank + "o")
+        return hands
+
+    def _cards_from_hand_key(self, hand_key: str) -> tuple[str, str]:
+        r1, r2 = hand_key[0], hand_key[1]
+        suffix = hand_key[2].lower() if len(hand_key) >= 3 else ""
+
+        if r1 == r2:
+            s1, s2 = self._rng.sample(_SUITS, 2)
+            return r1 + s1, r2 + s2
+
+        if suffix == "s":
+            suit = self._rng.choice(_SUITS)
+            return r1 + suit, r2 + suit
+
+        if suffix == "o":
+            s1 = self._rng.choice(_SUITS)
+            s2 = self._rng.choice([s for s in _SUITS if s != s1])
+            return r1 + s1, r2 + s2
+
+        # pair/suited/offsuit 以外のキーは安全側でデッキから2枚引く
+        c1, c2 = self._rng.sample(self._deck, 2)
+        return c1, c2
 
     def _answer_mode(self, problem_type: ProblemType, ctx: OpenRaiseProblemContext) -> str:
         if problem_type == ProblemType.JUEGO_OR:
