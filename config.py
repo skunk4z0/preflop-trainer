@@ -26,6 +26,16 @@ JSON_PATH = (DATA_DIR / "datasheet_ranges.json").resolve()
 FINAL_TAGS_JSON_PATH = (DATA_DIR / "final_tags.json").resolve()
 ENABLE_TELEMETRY = False
 
+# =========================
+# Weakness Weighting
+# =========================
+ENABLE_WEAKNESS_WEIGHTING = True
+WEAKNESS_RECENT_N = 20
+WEAKNESS_RECENT_MIN_ATTEMPTS = 5
+WEAKNESS_RECENT_TOP_K = 3
+WEAKNESS_KIND_BOOST = 2.0
+WEAKNESS_KIND_FLOOR = 0.8
+
 """
 Poker Trainer / JUEGO 設定
 

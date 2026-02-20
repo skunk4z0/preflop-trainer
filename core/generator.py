@@ -4,11 +4,14 @@ from __future__ import annotations
 import itertools
 import logging
 import random
+import sqlite3
+from pathlib import Path
 from typing import Optional
 
 import config
 
 from .models import Difficulty, GeneratedQuestion, OpenRaiseProblemContext, ProblemType
+from .stats import compute_weakness_bundle
 
 
 logger = logging.getLogger("poker_trainer.core.generator")
@@ -50,8 +53,12 @@ class JuegoProblemGenerator:
         self,
         rng: Optional[random.Random] = None,
         positions_3bet: Optional[list[str]] = None,
+        progress_db_path: Optional[Path] = None,
     ) -> None:
         self._rng = rng or random.Random()
+        self._progress_db_path = Path(progress_db_path) if progress_db_path is not None else None
+        self._weak_kinds_cache: set[str] = set()
+        self._weak_cache_last_id: int | None = None
 
         suits = ["s", "h", "d", "c"]
         ranks = ["A", "K", "Q", "J", "T", "9", "8", "7", "6", "5", "4", "3", "2"]
@@ -129,9 +136,74 @@ class JuegoProblemGenerator:
         if not kinds:
             logger.debug("pick_problem_type: candidates empty -> fallback JUEGO_OR")
             return ProblemType.JUEGO_OR
-        kind = self._rng.choice(kinds)
-        logger.debug("pick_problem_type: chosen_kind=%r", kind)
+
+        if len(kinds) == 1:
+            kind = kinds[0]
+            logger.debug("pick_problem_type: single candidate=%r", kind)
+            return self._kind_to_problem_type(kind)
+
+        weak_kinds = self._get_cached_weak_kinds()
+        if not weak_kinds:
+            kind = self._rng.choice(kinds)
+            logger.debug("pick_problem_type: no weak cache -> uniform chosen_kind=%r", kind)
+            return self._kind_to_problem_type(kind)
+
+        boost = float(config.WEAKNESS_KIND_BOOST)
+        floor = float(config.WEAKNESS_KIND_FLOOR)
+        weights = [boost if kind in weak_kinds else floor for kind in kinds]
+        kind = self._rng.choices(kinds, weights=weights, k=1)[0]
+        logger.debug(
+            "pick_problem_type: weighted chosen_kind=%r weak_kinds=%r weights=%r",
+            kind,
+            sorted(weak_kinds),
+            weights,
+        )
         return self._kind_to_problem_type(kind)
+
+    def _get_cached_weak_kinds(self) -> set[str]:
+        if not bool(getattr(config, "ENABLE_WEAKNESS_WEIGHTING", True)):
+            return set()
+        if self._progress_db_path is None:
+            return set()
+
+        db_path = self._progress_db_path
+        try:
+            with sqlite3.connect(str(db_path)) as con:
+                row = con.execute("SELECT COALESCE(MAX(id), 0) FROM attempts").fetchone()
+                latest_id = int(row[0] or 0) if row else 0
+        except sqlite3.Error as e:
+            logger.debug("weak cache: max(id) read failed path=%s err=%s", db_path, e)
+            return set()
+
+        if self._weak_cache_last_id == latest_id:
+            return set(self._weak_kinds_cache)
+
+        if latest_id == 0:
+            self._weak_cache_last_id = latest_id
+            self._weak_kinds_cache = set()
+            return set()
+
+        try:
+            bundle = compute_weakness_bundle(
+                db_path=db_path,
+                recent_n=int(config.WEAKNESS_RECENT_N),
+                recent_min_attempts=int(config.WEAKNESS_RECENT_MIN_ATTEMPTS),
+                recent_top_k=int(config.WEAKNESS_RECENT_TOP_K),
+            )
+            recent = bundle.get("recent")
+            weak_kinds = {
+                str(item.key).strip().upper()
+                for item in (recent.weak_kinds if recent is not None else [])
+                if str(item.key).strip()
+            }
+        except Exception as e:
+            logger.debug("weak cache: weakness compute failed path=%s err=%s", db_path, e)
+            weak_kinds = set()
+
+        self._weak_cache_last_id = latest_id
+        self._weak_kinds_cache = weak_kinds
+        logger.debug("weak cache: updated last_id=%s weak_kinds=%r", latest_id, sorted(weak_kinds))
+        return set(weak_kinds)
 
     @staticmethod
     def _kind_to_problem_type(kind: str) -> ProblemType:

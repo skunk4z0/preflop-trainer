@@ -66,6 +66,7 @@ def main() -> None:
     gen = JuegoProblemGenerator(
         rng=random.Random(),
         positions_3bet=positions_3bet,
+        progress_db_path=config.LEARNING_DB_PATH,
     )
 
     # ---- Core Engine ----
