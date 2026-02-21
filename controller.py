@@ -12,8 +12,10 @@ from uuid import uuid4
 
 import config
 from core.engine import PokerEngine, SubmitResult
-from core.models import Difficulty, ProblemType, OpenRaiseProblemContext
+from core.license import get_license_state, set_license_state as save_license_state
+from core.models import Difficulty, LearningMode, OpenRaiseProblemContext, ProblemType, SET_SIZE
 from core.progress_store import ProgressStore
+from core.stats import compute_set_summary
 from core.telemetry import Telemetry
 
 logger = logging.getLogger("poker_trainer.controller")
@@ -29,6 +31,10 @@ class ControllerState:
     # A) session settings
     selected_difficulty: Optional[Difficulty] = None
     selected_kinds: list[str] = field(default_factory=list)
+    learning_mode: LearningMode = LearningMode.SET_20
+    current_set_index: int = 0
+    attempt_index_in_set: int = 0
+    total_attempts_in_session: int = 0
     # B) in-progress state (follow-up)
     pending_followup_choices: Optional[list[float]] = None
     pending_followup_prompt: Optional[str] = None
@@ -175,6 +181,7 @@ class GameController:
         self.state.selected_difficulty = None
         self.state.selected_kinds = []
         self.reset_for_new_session()
+        self._cleanup_for_menu_transition()
 
     def reset_for_new_session(self) -> None:
         self.state.current_answer_mode = ""
@@ -182,16 +189,55 @@ class GameController:
         self.state.pending_followup_choices = None
         self.state.pending_followup_prompt = None
         self.state.current_session_id = str(uuid4())
+        self.state.current_set_index = 0
+        self.state.attempt_index_in_set = 0
+        self.state.total_attempts_in_session = 0
+        self.refresh_license_state()
+
+    def set_learning_mode(self, mode: LearningMode | str) -> None:
+        if isinstance(mode, LearningMode):
+            self.state.learning_mode = mode
+            return
+        key = str(mode or "").strip().upper()
+        try:
+            self.state.learning_mode = LearningMode[key]
+        except KeyError:
+            for item in LearningMode:
+                if item.value == key:
+                    self.state.learning_mode = item
+                    return
+            self.state.learning_mode = LearningMode.SET_20
+
+    def start_new_set(self) -> None:
+        if self.state.learning_mode != LearningMode.SET_20:
+            return
+        self.state.current_set_index += 1
+        self.state.attempt_index_in_set = 0
+        self._ui_call("close_set_result_popup")
+
+    def refresh_license_state(self) -> bool:
+        is_pro = bool(get_license_state())
+        gen = getattr(self.engine, "generator", None)
+        if gen is not None and hasattr(gen, "set_is_pro"):
+            try:
+                gen.set_is_pro(is_pro)
+            except Exception:
+                logger.exception("[CTRL] failed to apply license state to generator")
+        self._ui_call("set_pro_toggle_state", is_pro)
+        return is_pro
+
+    def set_pro_enabled(self, is_pro: bool) -> None:
+        save_license_state(bool(is_pro))
+        self.refresh_license_state()
 
     def reset_for_new_question(self) -> None:
+        self._ui_call("cleanup_quiz_ui")
         self.state.pending_followup_choices = None
         self.state.pending_followup_prompt = None
-        # 前回のレンジ表ポップアップが残っていたら閉じる
-        self._ui_call("close_range_grid_popup")
-        # 直前のロックやfollow-up UI残骸を掃除
-        self._ui_call("set_answer_buttons_locked", False)
-        self._ui_call("set_next_button_visible", False)
-        self._ui_call("hide_followup_size_buttons")
+
+    def _cleanup_for_menu_transition(self) -> None:
+        self._ui_call("cleanup_quiz_ui")
+        self._ui_call("cleanup_menu_ui")
 
     def reset_state(self) -> None:
         # Backward-compatible entrypoint used by UI.go_to_start()
@@ -200,8 +246,8 @@ class GameController:
     def go_to_start_keep_settings(self) -> None:
         # Keep selected difficulty/kinds, but clear in-progress engine/session state.
         self.engine.reset_state()
+        self._cleanup_for_menu_transition()
         self.reset_for_new_session()
-        self.reset_for_new_question()
         if self.state.selected_difficulty is None:
             # difficulty無し（カスタム kinds の可能性を含む）は安全にTOPへ戻す
             self._ui_call("show_top_screen")
@@ -293,6 +339,7 @@ class GameController:
     # -------------------------
     def new_question(self) -> None:
         self.reset_for_new_question()
+        self._ui_call("update_progress_counter", self._build_progress_counter_text())
 
         # ヨコサワ（未実装扱い）
         if self.engine.current_problem == ProblemType.YOKOSAWA_OPEN:
@@ -348,7 +395,10 @@ class GameController:
             self._ui_call("show_text", "[BUG] engine.submit() returned None. Check engine.submit() return paths.")
             return
 
-        self._append_learning_attempt(user_action=user_action, res=res)
+        saved = self._append_learning_attempt(user_action=user_action, res=res)
+        if not saved:
+            logger.warning("[CTRL] learning attempt was not persisted")
+        self._increment_attempt_counters_after_submit(res)
 
         # Telemetry: answer_submitted（follow-upも含めて記録）
         try:
@@ -388,6 +438,12 @@ class GameController:
         self.state.pending_followup_choices = None
         self.state.pending_followup_prompt = None
 
+        set_completed = self._advance_set_progress_if_needed(res)
+        if set_completed:
+            self._ui_call("set_next_button_visible", False)
+            self._show_set_result_and_actions()
+            return
+
         # 4) Next表示
         if getattr(res, "show_next_button", False):
             self._ui_call("set_next_button_visible", True)
@@ -402,6 +458,63 @@ class GameController:
                 judge_result=jr,
                 override_reason=res.text,
             )
+
+    def _advance_set_progress_if_needed(self, res: SubmitResult) -> bool:
+        if res.is_correct is None:
+            return False
+        if self.state.learning_mode != LearningMode.SET_20:
+            return False
+        return self.state.attempt_index_in_set >= SET_SIZE
+
+    def _increment_attempt_counters_after_submit(self, res: SubmitResult) -> None:
+        if res.is_correct is None:
+            return
+        self.state.total_attempts_in_session += 1
+        if self.state.learning_mode == LearningMode.SET_20:
+            self.state.attempt_index_in_set += 1
+
+    def _build_progress_counter_text(self) -> str:
+        if self.state.learning_mode == LearningMode.SET_20:
+            current = min(self.state.attempt_index_in_set + 1, SET_SIZE)
+            return f"{current}/{SET_SIZE}"
+        return str(self.state.total_attempts_in_session + 1)
+
+    def _show_set_result_and_actions(self) -> None:
+        try:
+            summary = compute_set_summary(
+                db_path=config.LEARNING_DB_PATH,
+                session_id=self.state.current_session_id,
+                set_index=self.state.current_set_index,
+            )
+            payload = summary.to_dict()
+        except Exception:
+            logger.exception("[CTRL] compute_set_summary failed")
+            payload = {
+                "set_index": self.state.current_set_index,
+                "total_attempts": self.state.attempt_index_in_set,
+                "total_correct": 0,
+                "total_accuracy": 0.0,
+                "by_kind": [],
+                "by_position": [],
+            }
+
+        payload["set_index"] = self.state.current_set_index
+        payload["set_size"] = SET_SIZE
+        payload["learning_mode"] = self.state.learning_mode.value
+        self._ui_call("show_set_result", payload)
+        self._ui_call(
+            "show_set_actions",
+            on_next_set=self._on_next_set_from_popup,
+            on_exit=self._on_exit_from_popup,
+        )
+
+    def _on_next_set_from_popup(self) -> None:
+        self.start_new_set()
+        self.new_question()
+
+    def _on_exit_from_popup(self) -> None:
+        self.reset_to_top()
+        self._ui_call("show_top_screen")
 
     # -------------------------
     # Range popup (incorrect only)
@@ -512,15 +625,15 @@ class GameController:
             return "CC_3BET"
         return "UNKNOWN"
 
-    def _append_learning_attempt(self, user_action: Optional[str], res: SubmitResult) -> None:
+    def _append_learning_attempt(self, user_action: Optional[str], res: SubmitResult) -> bool:
         if self.progress_store is None:
-            return
+            return False
         if res.is_correct is None:
-            return
+            return False
 
         ctx = getattr(self.engine, "context", None)
         if ctx is None:
-            return
+            return False
 
         jr = getattr(res, "judge_result", None)
         dbg = getattr(jr, "debug", None) or {}
@@ -543,6 +656,11 @@ class GameController:
             expected_raise_size_bb = None
 
         difficulty = self.state.selected_difficulty.name if self.state.selected_difficulty is not None else None
+        learning_mode = self.state.learning_mode.value
+        set_index = self.state.current_set_index if self.state.learning_mode == LearningMode.SET_20 else None
+        attempt_index_in_set = (
+            self.state.attempt_index_in_set if self.state.learning_mode == LearningMode.SET_20 else None
+        )
         record = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "session_id": self.state.current_session_id,
@@ -554,10 +672,15 @@ class GameController:
             "user_action": str(user_action or ""),
             "correct_action": expected_action,
             "is_correct": 1 if bool(res.is_correct) else 0,
+            "learning_mode": learning_mode,
+            "set_index": set_index,
+            "attempt_index_in_set": attempt_index_in_set,
             "expected_raise_size_bb": float(expected_raise_size_bb) if expected_raise_size_bb is not None else None,
             "extra_json": "{}",
         }
         try:
             self.progress_store.append_attempt(record)
+            return True
         except Exception:
             logger.exception("[CTRL] progress append failed")
+            return False

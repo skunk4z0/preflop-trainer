@@ -62,6 +62,7 @@ class PokerTrainerUI:
 
         # popup参照
         self._range_popup = None
+        self._set_result_popup = None
 
         # -------------------------
         # UI
@@ -80,12 +81,16 @@ class PokerTrainerUI:
         self.btn_next = tk.Button(self.nav_frame, text="Next", command=self.on_next)
         self.btn_next.pack(side=tk.LEFT, padx=5)
         self.btn_next.pack_forget()
+        self.lbl_progress = tk.Label(self.nav_frame, text="")
+        self.lbl_progress.pack(side=tk.RIGHT, padx=5)
 
         self.menu_container = tk.Frame(self.top)
         self.menu_container.pack(fill=tk.X, pady=(8, 0))
 
         # TOP画面
         self.top_screen_frame = tk.Frame(self.menu_container)
+        self.var_pro_enabled = tk.BooleanVar(value=False)
+        self.var_learning_mode = tk.StringVar(value="SET_20")
         self.btn_top_difficulty = tk.Button(
             self.top_screen_frame,
             text="難易度別で練習",
@@ -107,6 +112,32 @@ class PokerTrainerUI:
         self.btn_top_difficulty.pack(side=tk.LEFT, padx=5)
         self.btn_top_situation.pack(side=tk.LEFT, padx=5)
         self.btn_top_yokosawa.pack(side=tk.LEFT, padx=5)
+        self.chk_pro = tk.Checkbutton(
+            self.top_screen_frame,
+            text="Pro: OFF",
+            variable=self.var_pro_enabled,
+            onvalue=True,
+            offvalue=False,
+            command=self.on_toggle_pro,
+            width=10,
+            anchor="w",
+        )
+        self.chk_pro.pack(side=tk.LEFT, padx=8)
+        self.mode_frame = tk.Frame(self.top_screen_frame)
+        self.mode_frame.pack(side=tk.LEFT, padx=(8, 0))
+        tk.Label(self.mode_frame, text="Mode").pack(side=tk.LEFT)
+        tk.Radiobutton(
+            self.mode_frame,
+            text="SET_20",
+            value="SET_20",
+            variable=self.var_learning_mode,
+        ).pack(side=tk.LEFT, padx=2)
+        tk.Radiobutton(
+            self.mode_frame,
+            text="UNLIMITED",
+            value="UNLIMITED",
+            variable=self.var_learning_mode,
+        ).pack(side=tk.LEFT, padx=2)
 
         # 難易度選択画面
         self.difficulty_screen_frame = tk.Frame(self.menu_container)
@@ -247,6 +278,7 @@ class PokerTrainerUI:
     def attach_controller(self, controller: Any) -> None:
         # UI -> domain access must go through controller methods only.
         self.controller = controller
+        self.on_refresh_pro_state()
 
     # -------------------------
     # 画面遷移（TOP/難易度/確認/シチュエーション）
@@ -295,22 +327,33 @@ class PokerTrainerUI:
         if hasattr(self, "var_pos"):
             self.var_pos.set("")
 
-    def _apply_start_screen_ui(self) -> None:
-        # UIだけを「開始前」状態に戻す
-        self.close_range_grid_popup()
+    def cleanup_quiz_ui(self) -> None:
+        # クイズ画面で残りやすいUI要素を安全に掃除する
+        self.close_cards()
         self.hide_next_button()
         self.hide_followup_size_buttons()
-        self._tk_call("hide ans_frame on menu", self.ans_frame.pack_forget)
-        self._switch_menu_screen(self.top_screen_frame)
+        self.set_answer_buttons_locked(False)
+        self.close_range_grid_popup()
+        self.close_set_result_popup()
+
+    def cleanup_menu_ui(self) -> None:
+        # メニュー遷移時に不要な表示状態を初期化する
+        self.update_progress_counter("")
+        self.close_set_result_popup()
+        self.hide_next_button()
         self.set_nav_buttons_visibility(show_home=False, show_keep_settings=False)
 
-        # カード/入力欄/説明をクリア
-        self.close_cards()
+    def _apply_start_screen_ui(self) -> None:
+        # UIだけを「開始前」状態に戻す
+        self.cleanup_quiz_ui()
+        self.cleanup_menu_ui()
+        self._switch_menu_screen(self.top_screen_frame)
         self.show_text("練習モードを選択してください。")
 
     def show_top_screen(self) -> None:
+        self.cleanup_quiz_ui()
+        self.cleanup_menu_ui()
         self._switch_menu_screen(self.top_screen_frame)
-        self.set_nav_buttons_visibility(show_home=False, show_keep_settings=False)
         self.show_text("練習モードを選択してください。")
 
     def show_difficulty_screen(self) -> None:
@@ -342,12 +385,10 @@ class PokerTrainerUI:
             self.top.pack(padx=10, pady=10, fill=tk.X)
 
     def go_to_start(self) -> None:
-        self.close_cards()
-        # Controller状態をリセット（あれば）
         if self.controller is not None and hasattr(self.controller, "reset_state"):
             self.controller.reset_state()
-        if self.menu_container.winfo_manager() == "":
-            self.menu_container.pack(fill=tk.X, pady=(8, 0))
+            self.controller.open_top()
+            return
         self._apply_start_screen_ui()
 
     def on_go_to_start_keep_settings(self) -> None:
@@ -365,6 +406,24 @@ class PokerTrainerUI:
             self.show_top_screen()
             return
         self.controller.open_top()
+
+    def on_toggle_pro(self) -> None:
+        enabled = bool(self.var_pro_enabled.get())
+        self.chk_pro.configure(text=f"Pro: {'ON' if enabled else 'OFF'}")
+        if self.controller is None:
+            self.show_text("内部エラー：Controllerが未接続です")
+            return
+        self.controller.set_pro_enabled(enabled)
+
+    def on_refresh_pro_state(self) -> None:
+        if self.controller is None:
+            return
+        self.controller.refresh_license_state()
+
+    def set_pro_toggle_state(self, is_pro: bool) -> None:
+        enabled = bool(is_pro)
+        self.var_pro_enabled.set(enabled)
+        self.chk_pro.configure(text=f"Pro: {'ON' if enabled else 'OFF'}")
 
     def open_difficulty_practice(self) -> None:
         if self.controller is None:
@@ -389,12 +448,14 @@ class PokerTrainerUI:
         if self.controller is None:
             self.show_text("内部エラー：Controllerが未接続です")
             return
+        self.controller.set_learning_mode(self.var_learning_mode.get())
         self.controller.start_selected_kinds()
 
     def start_situation_kinds(self) -> None:
         if self.controller is None:
             self.show_text("内部エラー：Controllerが未接続です")
             return
+        self.controller.set_learning_mode(self.var_learning_mode.get())
         selected_kinds = [kind for kind, var in self.var_kind_checks.items() if var.get()]
         self.controller.start_juego_with_kinds(selected_kinds)
 
@@ -521,6 +582,86 @@ class PokerTrainerUI:
     def show_text(self, s: str) -> None:
         self.txt.delete("1.0", tk.END)
         self.txt.insert(tk.END, s)
+
+    def close_set_result_popup(self) -> None:
+        if self._set_result_popup is None:
+            return
+        try:
+            self._set_result_popup.destroy()
+        except tk.TclError:
+            pass
+        finally:
+            self._set_result_popup = None
+
+    def show_set_result(self, summary: dict[str, Any]) -> None:
+        self.close_set_result_popup()
+        win = tk.Toplevel(self.root)
+        self._set_result_popup = win
+        win.title("セット結果")
+
+        def _on_close() -> None:
+            self.close_set_result_popup()
+
+        win.protocol("WM_DELETE_WINDOW", _on_close)
+
+        set_index = int(summary.get("set_index", 0))
+        set_size = int(summary.get("set_size", 20))
+        total_attempts = int(summary.get("total_attempts", 0))
+        total_correct = int(summary.get("total_correct", 0))
+        total_accuracy = float(summary.get("total_accuracy", 0.0))
+        mode = str(summary.get("learning_mode", "SET_20"))
+
+        text = (
+            f"Mode: {mode}\n"
+            f"Set: {set_index + 1}\n"
+            f"Attempts: {total_attempts}/{set_size}\n"
+            f"Correct: {total_correct}\n"
+            f"Accuracy: {total_accuracy * 100:.1f}%"
+        )
+        ttk.Label(win, text=text, justify="left").pack(padx=12, pady=(12, 8), anchor="w")
+
+        by_kind = summary.get("by_kind", [])
+        if isinstance(by_kind, list) and by_kind:
+            rows = []
+            for item in by_kind:
+                if not isinstance(item, dict):
+                    continue
+                key = str(item.get("key", ""))
+                attempts = int(item.get("attempts", 0))
+                acc = float(item.get("accuracy", 0.0))
+                rows.append(f"- {key}: {attempts}問 / {acc * 100:.1f}%")
+            if rows:
+                ttk.Label(win, text="By kind").pack(padx=12, anchor="w")
+                ttk.Label(win, text="\n".join(rows), justify="left").pack(padx=18, pady=(2, 10), anchor="w")
+
+        action_frame = ttk.Frame(win)
+        action_frame.pack(fill="x", padx=12, pady=(0, 12))
+        win._set_action_frame = action_frame  # type: ignore[attr-defined]
+
+    def show_set_actions(self, on_next_set=None, on_exit=None) -> None:
+        if self._set_result_popup is None:
+            return
+        frame = getattr(self._set_result_popup, "_set_action_frame", None)
+        if frame is None:
+            frame = ttk.Frame(self._set_result_popup)
+            frame.pack(fill="x", padx=12, pady=(0, 12))
+            self._set_result_popup._set_action_frame = frame  # type: ignore[attr-defined]
+
+        for child in frame.winfo_children():
+            child.destroy()
+
+        def _run_and_close(cb) -> None:
+            self.close_set_result_popup()
+            if callable(cb):
+                cb()
+
+        self._set_result_popup.protocol("WM_DELETE_WINDOW", lambda: _run_and_close(on_exit))
+
+        ttk.Button(frame, text="次のセット", command=lambda: _run_and_close(on_next_set)).pack(side=tk.LEFT, padx=4)
+        ttk.Button(frame, text="終了", command=lambda: _run_and_close(on_exit)).pack(side=tk.LEFT, padx=4)
+
+    def update_progress_counter(self, text: str) -> None:
+        self.lbl_progress.config(text=str(text or ""))
 
     # -------------------------
     # Follow-up buttons
