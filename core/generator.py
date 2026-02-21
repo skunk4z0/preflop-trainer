@@ -54,9 +54,11 @@ class JuegoProblemGenerator:
         rng: Optional[random.Random] = None,
         positions_3bet: Optional[list[str]] = None,
         progress_db_path: Optional[Path] = None,
+        is_pro: bool = False,
     ) -> None:
         self._rng = rng or random.Random()
         self._progress_db_path = Path(progress_db_path) if progress_db_path is not None else None
+        self._is_pro = bool(is_pro)
         self._weak_kinds_cache: set[str] = set()
         self._weak_cache_last_id: int | None = None
 
@@ -142,6 +144,16 @@ class JuegoProblemGenerator:
             logger.debug("pick_problem_type: single candidate=%r", kind)
             return self._kind_to_problem_type(kind)
 
+        if not (bool(getattr(config, "ENABLE_WEAKNESS_WEIGHTING", True)) and self._is_pro):
+            kind = self._rng.choice(kinds)
+            logger.debug(
+                "pick_problem_type: weakness disabled (enable=%s is_pro=%s) -> uniform chosen_kind=%r",
+                bool(getattr(config, "ENABLE_WEAKNESS_WEIGHTING", True)),
+                self._is_pro,
+                kind,
+            )
+            return self._kind_to_problem_type(kind)
+
         weak_kinds = self._get_cached_weak_kinds()
         if not weak_kinds:
             kind = self._rng.choice(kinds)
@@ -204,6 +216,12 @@ class JuegoProblemGenerator:
         self._weak_kinds_cache = weak_kinds
         logger.debug("weak cache: updated last_id=%s weak_kinds=%r", latest_id, sorted(weak_kinds))
         return set(weak_kinds)
+
+    def set_is_pro(self, is_pro: bool) -> None:
+        self._is_pro = bool(is_pro)
+
+    def is_pro(self) -> bool:
+        return self._is_pro
 
     @staticmethod
     def _kind_to_problem_type(kind: str) -> ProblemType:

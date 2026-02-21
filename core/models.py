@@ -12,6 +12,14 @@ class Difficulty(Enum):
     ADVANCED = auto()
 
 
+class LearningMode(Enum):
+    SET_20 = "SET_20"
+    UNLIMITED = "UNLIMITED"
+
+
+SET_SIZE = 20
+
+
 class ProblemType(Enum):
     YOKOSAWA_OPEN = auto()
 

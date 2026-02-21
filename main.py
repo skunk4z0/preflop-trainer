@@ -9,6 +9,7 @@ import config
 from controller import GameController
 from core.engine import PokerEngine
 from core.generator import JuegoProblemGenerator
+from core.license import get_license_state
 from core.progress_store import ProgressStore
 from juego_judge import JUEGOJudge
 from json_range_repository import JsonRangeRepository
@@ -63,10 +64,12 @@ def main() -> None:
     # ---- Generator ----
     # NOTE: list_positions の kind 名はあなたのJSON設計に依存
     positions_3bet = repo.list_positions("CC_3BET")
+    is_pro = get_license_state()
     gen = JuegoProblemGenerator(
         rng=random.Random(),
         positions_3bet=positions_3bet,
         progress_db_path=config.LEARNING_DB_PATH,
+        is_pro=is_pro,
     )
 
     # ---- Core Engine ----
@@ -79,7 +82,7 @@ def main() -> None:
     root = tk.Tk()
     ui = PokerTrainerUI(root)
     controller = GameController(ui=ui, engine=engine, enable_debug=False, progress_store=progress_store)
-    ui.controller = controller
+    ui.attach_controller(controller)
 
     root.mainloop()
 

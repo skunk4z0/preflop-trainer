@@ -139,6 +139,66 @@ def compute_summary_dict(db_path: Path, recent_n: int = 50) -> dict[str, Any]:
     return compute_summary(db_path=db_path, recent_n=recent_n).to_dict()
 
 
+def compute_set_summary(db_path: Path, session_id: str, set_index: int) -> StatsSummary:
+    db_path_str = str(Path(db_path))
+    session_id = str(session_id)
+    set_index = int(set_index)
+
+    with sqlite3.connect(db_path_str) as con:
+        total_attempts_raw, total_correct_raw = con.execute(
+            """
+            SELECT COUNT(*), COALESCE(SUM(is_correct), 0)
+            FROM attempts
+            WHERE session_id = ? AND set_index = ?
+            """,
+            (session_id, set_index),
+        ).fetchone()
+        total_attempts = int(total_attempts_raw or 0)
+        total_correct = int(total_correct_raw or 0)
+
+        by_kind_rows = con.execute(
+            """
+            SELECT kind, COUNT(*), COALESCE(SUM(is_correct), 0)
+            FROM attempts
+            WHERE session_id = ? AND set_index = ?
+            GROUP BY kind
+            ORDER BY COUNT(*) DESC
+            """,
+            (session_id, set_index),
+        ).fetchall()
+        by_kind = [_row_to_rate(str(kind), int(attempts), int(correct)) for kind, attempts, correct in by_kind_rows]
+
+        by_position_rows = con.execute(
+            """
+            SELECT position, COUNT(*), COALESCE(SUM(is_correct), 0)
+            FROM attempts
+            WHERE session_id = ? AND set_index = ?
+            GROUP BY position
+            ORDER BY COUNT(*) DESC
+            """,
+            (session_id, set_index),
+        ).fetchall()
+        by_position = [
+            _row_to_rate(str(position), int(attempts), int(correct))
+            for position, attempts, correct in by_position_rows
+        ]
+
+    recent = RecentTrend(
+        recent_n=total_attempts,
+        attempts=total_attempts,
+        correct=total_correct,
+        accuracy=_safe_accuracy(total_correct, total_attempts),
+    )
+    return StatsSummary(
+        total_attempts=total_attempts,
+        total_correct=total_correct,
+        total_accuracy=_safe_accuracy(total_correct, total_attempts),
+        by_kind=by_kind,
+        by_position=by_position,
+        recent=recent,
+    )
+
+
 def compute_weakness_report(
     db_path: Path,
     *,

@@ -48,7 +48,7 @@ def test_pick_problem_type_biases_to_weak_kind(tmp_path: Path, monkeypatch: pyte
         idx += 1
         _append_attempt(store, idx=idx, kind="ROL", is_correct=1)
 
-    gen = JuegoProblemGenerator(rng=random.Random(7), progress_db_path=db_path)
+    gen = JuegoProblemGenerator(rng=random.Random(7), progress_db_path=db_path, is_pro=True)
     counts = {"OR": 0, "ROL": 0}
     for _ in range(1000):
         kind = gen._pick_problem_type(["OR", "ROL"])

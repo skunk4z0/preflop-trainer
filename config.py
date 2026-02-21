@@ -21,6 +21,8 @@ EXCEL_PATH = _resolve_excel_path(_EXCEL_PATH_WINDOWS)
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = (BASE_DIR / "data").resolve()
 LEARNING_DB_PATH = (DATA_DIR / "learning.db").resolve()
+LICENSE_PATH = (DATA_DIR / "license.json").resolve()
+DEFAULT_IS_PRO = False
 
 JSON_PATH = (DATA_DIR / "datasheet_ranges.json").resolve()
 FINAL_TAGS_JSON_PATH = (DATA_DIR / "final_tags.json").resolve()
